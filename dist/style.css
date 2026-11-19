@@ -46,6 +46,8 @@ a { color: inherit; }
   text-decoration: none;
   text-transform: uppercase;
 }
+html[lang="ko"] [data-wordmark-locale="en"],
+html[lang="en"] [data-wordmark-locale="ko"] { display: none; }
 .site-menu { display: flex; align-items: center; gap: var(--menu-gap); }
 .site-menu a {
   display: inline-flex;

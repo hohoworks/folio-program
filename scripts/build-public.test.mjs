@@ -47,6 +47,9 @@ test('only public records and referenced images reach Pages, including after unp
   for (const path of [front, page, art, gallery, portrait, 'assets/books/shown/unused.webp', '.dev.vars']) await f.write(path, 'fixture');
   await f.save(catalog);
   await buildPublic(f.root);
+  const home = await readFile(join(f.output, 'index.html'), 'utf8');
+  assert.ok(home.includes('<title data-en="포트폴리오">포트폴리오</title>'));
+  assert.ok(home.includes('<span data-wordmark-locale="en" lang="ko">포트폴리오</span>'));
   const published = await f.read();
   assert.equal(published.demo, false);
   assert.deepEqual(published.order, [id]);
@@ -71,6 +74,7 @@ test('an explicit empty demo includes all sample assets; a failed build preserve
   const f = await fixture(t);
   await f.save({ books: [], demo: true });
   await buildPublic(f.root);
+  assert.ok((await readFile(join(f.output, 'index.html'), 'utf8')).includes('<title data-en="Folio">Folio</title>'));
   await readFile(join(f.output, 'library.js'));
   await readFile(join(f.output, 'assets/forest-cover.webp'));
   await readFile(join(f.output, 'assets/examples/thumbs/afterimage.webp'));
@@ -98,7 +102,7 @@ test('separate checkouts publish current private-repository data and program-rep
   for (const path of [image, draft]) await mkdir(dirname(join(contentDir, path)), { recursive: true });
   await f.save({ demo: true, books: [] });
   await f.write(image, 'outdated bytes in the program repository');
-  const privateCatalog = { books: [], projects: [
+  const privateCatalog = { site: { title: '  작업 & <책>  ', translations: { en: { title: 'Studio "A" / $&' } } }, books: [], projects: [
     { id: 'live', title: '공개', images: [{ imageSrc: image }] },
     { id: 'draft', title: '미공개', published: false, images: [{ imageSrc: draft }] },
   ] };
@@ -109,7 +113,10 @@ test('separate checkouts publish current private-repository data and program-rep
   await buildPublic(f.root, opts);
   const readOutput = path => readFile(join(outputDir, path), 'utf8');
   assert.equal(await readOutput(image), 'published artwork');
-  assert.equal(await readOutput('index.html'), await readFile(join(f.source, 'index.html'), 'utf8'));
+  const home = await readOutput('index.html');
+  assert.ok(home.includes('<title data-en="Studio &quot;A&quot; / $&amp;">작업 &amp; &lt;책&gt;</title>'));
+  assert.ok(home.includes('<span data-wordmark-locale="ko" lang="ko">작업 &amp; &lt;책&gt;</span>'));
+  assert.ok(home.includes('<span data-wordmark-locale="en" lang="en">Studio &quot;A&quot; / $&amp;</span>'));
   assert.deepEqual(JSON.parse(await readOutput('catalog.json')).projects.map(item => item.id), ['live']);
   await assert.rejects(readOutput(draft), { code: 'ENOENT' });
   await rm(join(contentDir, image));

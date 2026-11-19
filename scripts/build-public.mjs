@@ -2,10 +2,11 @@ import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeF
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { catalogAssets, checkSite } from './check-site.mjs';
+import { titleLanguage } from '../dist/title-language.js';
 
 const program = [
   'index.html', '404.html', '_headers', 'assets/folio.svg', 'style.css', 'mobile-reader.css', 'web-fonts.js',
-  'viewer.js', 'catalog.js', 'shelf.js', 'project-tags.js', 'title-language.js', 'curl.js', 'mobile-reader.js',
+  'viewer.js', 'catalog.js', 'shelf.js', 'project-tags.js', 'title-language.js', 'site-language.js', 'curl.js', 'mobile-reader.js',
 ];
 const demoProgram = ['library.js', 'book.js', 'demo-projects.js'];
 const programPaths = new Set([...program, ...demoProgram, ...catalogAssets({ books: [], demo: true })]);
@@ -36,6 +37,24 @@ function publicCatalog(source) {
     books, projects,
     ...(source.order != null && { order: source.order.filter(id => ids.has(id)) }),
   };
+}
+
+function escapeHtml(value) {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+function renderSiteTitle(html, site) {
+  const ko = typeof site?.title === 'string' && site.title.trim() ? site.title.trim() : 'Folio';
+  const translation = site?.translations?.en?.title;
+  const en = typeof translation === 'string' && translation.trim() ? translation : ko;
+  const koText = escapeHtml(ko);
+  const enText = escapeHtml(en);
+  const wordmark = '<a href="#project" class="wordmark">' +
+    `<span data-wordmark-locale="ko" lang="${titleLanguage(ko)}">${koText}</span>` +
+    `<span data-wordmark-locale="en" lang="${titleLanguage(en)}">${enText}</span></a>`;
+  return html.replace('<title>포트폴리오</title>', () => `<title data-en="${enText}">${koText}</title>`)
+    .replace('<a href="#project" class="wordmark" aria-label="홈"></a>', () => wordmark);
 }
 
 function contains(parent, path) {
@@ -104,7 +123,12 @@ export async function buildPublic(projectRoot, { contentDir, outputDir } = {}) {
         }
         const target = join(staging, path);
         await mkdir(dirname(target), { recursive: true });
-        await copyFile(input, target);
+        if (path === 'index.html') {
+          const html = await readFile(input, 'utf8');
+          await writeFile(target, renderSiteTitle(html, catalog.site));
+        } else {
+          await copyFile(input, target);
+        }
       }));
       for (const copy of copies) if (copy.status === 'rejected') throw copy.reason;
     }

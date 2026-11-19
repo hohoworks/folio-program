@@ -57,20 +57,7 @@ const messages = {
     noMatches: 'No projects match these filters.', workTags: 'Categories and year',
   },
 };
-let locale = initialLocale();
-document.documentElement.lang = locale;
-
-function initialLocale() {
-  const query = new URL(location.href).searchParams.get('lang');
-  if (query === 'en' || query === 'ko') return query;
-  try {
-    const saved = localStorage.getItem(languageStorageKey);
-    if (saved === 'en' || saved === 'ko') return saved;
-  } catch {
-    // The language controls also work when browser storage is unavailable.
-  }
-  return 'ko';
-}
+let locale = document.documentElement.lang;
 
 function t(key) {
   return messages[locale][key];
@@ -550,6 +537,13 @@ function animateCoverArrival(source) {
 
 const { books, entries, site, unavailable } = await loadCatalog();
 const wordmark = document.querySelector('.wordmark');
+const siteTitles = unavailable ? {
+  ko: wordmark.querySelector('[data-wordmark-locale="ko"]')?.textContent || '포트폴리오',
+  en: wordmark.querySelector('[data-wordmark-locale="en"]')?.textContent || 'Portfolio',
+} : {
+  ko: site.title,
+  en: translated(site.translations.en.title, site.title),
+};
 const projectMenu = $('project-menu');
 const projectCards = new Map();
 if (new URL(location.href).searchParams.has('sort')) {
@@ -946,15 +940,11 @@ const hasContactLinks = $('contact-links').childElementCount > 0;
 $('contact-empty').hidden = !contactLayout.hidden || hasContactLinks;
 $('contact-details').hidden = !hasContactLinks && !contactLayout.hidden;
 
-function siteTitle() {
-  return locale === 'en' ? translated(site.translations.en.title, site.title) : site.title;
-}
-
 function updateDocumentTitle() {
   const route = routeFromHash();
   const labels = { project: '', about: t('about'), bookshelf: t('bookshelf'), contact: t('contact') };
   const title = route.entry ? itemCopy(route.entry).title : labels[route.page];
-  document.title = title ? title + ' · ' + siteTitle() : siteTitle();
+  document.title = title ? title + ' · ' + siteTitles[locale] : siteTitles[locale];
 }
 
 function updateProjectText(entry) {
@@ -998,9 +988,9 @@ function updateBookText(book) {
 
 function refreshLocale() {
   document.documentElement.lang = locale;
-  wordmark.textContent = siteTitle();
-  wordmark.lang = titleLanguage(siteTitle());
-  wordmark.setAttribute('aria-label', siteTitle() + ' ' + t('home'));
+  wordmark.textContent = siteTitles[locale];
+  wordmark.lang = titleLanguage(siteTitles[locale]);
+  wordmark.setAttribute('aria-label', siteTitles[locale] + ' ' + t('home'));
   document.querySelector('.site-menu').setAttribute('aria-label', t('menu'));
   for (const link of document.querySelectorAll('.site-menu a')) {
     link.textContent = t(link.hash.slice(1));
