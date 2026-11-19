@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="책과 디자인 작업을 모아 둔 포트폴리오.">
+  <title>Folio</title>
+  <link rel="icon" type="image/svg+xml" href="./assets/folio.svg">
+  <script id="adobe-fonts" async src="https://use.typekit.net/gwz2aiq.js"></script>
+  <script defer src="./web-fonts.js"></script>
+  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./mobile-reader.css">
+</head>
+<body>
+  <div class="site-shell">
+  <header class="site-header">
+    <a href="#project" class="wordmark" lang="en" aria-label="Folio 홈">Folio</a>
+    <div class="header-controls">
+    <nav class="site-menu" aria-label="주 메뉴">
+      <a href="#about">소개</a>
+      <a id="project-menu" href="#project" aria-current="page">작업</a>
+      <a href="#bookshelf">책장</a>
+      <a href="#contact">연락처</a>
+    </nav>
+    <div id="language-switch" class="language-switch">
+      <button id="language-toggle" type="button" data-locale="en" lang="en" aria-label="Switch to English"><span class="language-parenthesis" aria-hidden="true">(</span><span id="language-name">ENG</span><span class="language-parenthesis" aria-hidden="true">)</span></button>
+    </div>
+    </div>
+  </header>
+
+  <main class="viewer">
+    <section id="projects" aria-labelledby="projects-title">
+      <h1 id="projects-title" class="sr-only" tabindex="-1" lang="en">Project</h1>
+      <div id="project-toolbar" class="project-toolbar">
+        <label class="project-control" for="project-category"><span id="project-category-label">분류</span><select id="project-category" aria-controls="project-list"></select></label>
+        <label class="project-control" for="project-year"><span id="project-year-label">연도</span><select id="project-year" aria-controls="project-list"></select></label>
+      </div>
+      <p id="project-status" class="sr-only" role="status" aria-live="polite"></p>
+      <div id="project-list" class="project-list"></div>
+      <p id="projects-empty" class="library-empty" hidden>아직 공개된 작업이 없습니다.</p>
+    </section>
+
+    <section id="about" class="information-page" aria-labelledby="about-title" hidden>
+      <h1 id="about-title" class="sr-only" tabindex="-1">About</h1>
+      <div class="about-layout">
+        <div class="intro-column" lang="ko">
+          <div id="about-text" class="intro-text"></div>
+        </div>
+        <div class="intro-column" lang="en">
+          <div id="about-en-text" class="intro-text"></div>
+        </div>
+      </div>
+      <div id="about-visual" class="about-visual" hidden></div>
+    </section>
+
+    <section id="library" class="library" aria-labelledby="library-title" hidden>
+      <h1 id="library-title" class="sr-only" tabindex="-1" lang="en">Book shelf</h1>
+      <div class="library-layout">
+        <nav class="shelf-index" aria-labelledby="library-title">
+          <ul id="book-index"></ul>
+        </nav>
+        <div id="library-gallery" class="library-gallery">
+          <div id="shelf-gallery" class="shelf-gallery">
+            <div id="shelf" class="shelf"></div>
+          </div>
+          <p id="library-empty" class="library-empty" hidden>아직 공개된 책이 없습니다.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="contact" class="information-page" aria-labelledby="contact-title" hidden>
+      <h1 id="contact-title" class="sr-only" tabindex="-1">연락처</h1>
+      <div class="contact-layout">
+        <div class="intro-column" lang="ko">
+          <div id="contact-text" class="intro-text"></div>
+        </div>
+        <div class="intro-column" lang="en">
+          <div id="contact-en-text" class="intro-text"></div>
+        </div>
+      </div>
+      <div id="contact-details" class="intro-column">
+        <div id="contact-links" class="contact-links"></div>
+        <p id="contact-empty" hidden>연락처가 아직 등록되지 않았습니다.</p>
+      </div>
+    </section>
+
+    <section id="project-viewer" class="project-viewer" aria-labelledby="project-title" hidden>
+      <nav class="view-bar" aria-label="작업 탐색"><a id="project-back" class="section-back" href="#project">← Project</a></nav>
+      <div id="project-detail-content"></div>
+    </section>
+
+    <section id="book-viewer" data-mode="cover" aria-labelledby="book-title" hidden>
+      <nav class="view-bar" aria-label="책 탐색"><a id="library-back" class="section-back" href="#bookshelf">← Book shelf</a></nav>
+      <div class="book-layout">
+        <section id="stage" class="stage" data-mode="cover" aria-label="책 뷰어">
+          <div id="cover-view" class="cover-view">
+            <div class="model-area">
+              <div class="model-shadow" aria-hidden="true"></div>
+              <div id="orbit" class="orbit" tabindex="0" role="group" aria-label="3D 표지">
+                <div id="model-frame" class="model-frame">
+                  <div id="book-model" class="book-model" aria-hidden="true">
+                    <div class="face front cover-art" lang="en"></div>
+                    <div class="face back" lang="en"></div>
+                    <div class="face spine"></div>
+                    <div class="face fore"></div>
+                    <div class="face head"></div>
+                    <div class="face tail"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div id="reading-view" class="reading-view" hidden>
+            <div class="reader-window">
+              <div id="page-area" class="page-area">
+                <div id="current-page" class="current-page"></div>
+                <div id="turn-prev" class="drag-zone drag-prev" data-direction="-1" aria-hidden="true"></div>
+                <div id="turn-next" class="drag-zone drag-next" data-direction="1" aria-hidden="true"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="book-detail">
+          <h1 id="book-title" tabindex="-1"></h1>
+          <nav id="book-tags" class="work-tags" aria-label="분류와 연도"></nav>
+          <div id="book-description" class="book-description"></div>
+          <p id="book-metadata" class="book-metadata"></p>
+          <button id="read-book" class="read-book" type="button">읽기 <span aria-hidden="true">→</span></button>
+        </aside>
+      </div>
+      <nav class="page-navigation" aria-label="책 탐색">
+        <button id="prev" type="button" hidden>← 표지</button>
+        <output id="position" for="prev next" aria-live="polite"><span>표지</span><span class="position-total">/ 10</span></output>
+        <button id="next" type="button">다음 →</button>
+      </nav>
+    </section>
+  </main>
+  </div>
+
+  <script src="./viewer.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,1009 @@
+import { STOCK_PROJECT_TAGS, idsFor } from '../dist/project-tags.js';
+
+const sessionCookie = '__Host-folio-admin';
+const sessionDuration = 4 * 60 * 60;
+const githubVersion = '2026-03-10';
+const catalogPath = 'dist/catalog.json';
+const maxAssetBytes = 10 * 1024 * 1024;
+const maxPages = 1000;
+// Leave 1,000 files for the viewer, admin bundles, fonts, and other static assets.
+const maxCatalogImages = 19000;
+const bindingTypes = new Set(['hardcover', 'saddle-stitch', 'exposed-sewn', 'paperback']);
+const gitSha = /^[a-f0-9]{40}$/;
+const encoder = new TextEncoder();
+
+const imageExtensions = new Map([
+  ['image/jpeg', 'jpg'],
+  ['image/png', 'png'],
+  ['image/webp', 'webp'],
+]);
+
+const securityHeaders = {
+  'Cache-Control': 'no-store',
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
+    "worker-src 'self' blob:",
+    "img-src 'self' blob: data:",
+    "font-src 'self' blob: data:",
+    "style-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+  ].join('; '),
+  'Referrer-Policy': 'no-referrer',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+};
+
+class RequestError extends Error {
+  constructor(status, message, retryAfter, code) {
+    super(message);
+    this.status = status;
+    this.retryAfter = retryAfter;
+    this.code = code;
+  }
+}
+
+function json(value, status = 200, headers = {}) {
+  return Response.json(value, { status, headers: { ...securityHeaders, ...headers } });
+}
+
+function adminCode(env) {
+  if (typeof env.ADMIN_CODE !== 'string' || !/^[A-Za-z0-9_-]{43,128}$/.test(env.ADMIN_CODE)) {
+    throw new RequestError(503, '관리자 접속 코드가 설정되어 있지 않습니다.');
+  }
+  return env.ADMIN_CODE;
+}
+
+function hmacKey(code) {
+  return crypto.subtle.importKey(
+    'raw', encoder.encode(code), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'],
+  );
+}
+
+function base64(bytes) {
+  if (typeof bytes.toBase64 === 'function') return bytes.toBase64();
+  if (globalThis.Buffer) {
+    return globalThis.Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
+  }
+  const strings = [];
+  for (let i = 0; i < bytes.length; i += 0x4000) {
+    strings.push(String.fromCharCode(...bytes.subarray(i, i + 0x4000)));
+  }
+  return btoa(strings.join(''));
+}
+
+function urlBase64(bytes) {
+  return base64(bytes).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+function cookieValue(value, duration = sessionDuration) {
+  return `${sessionCookie}=${value}; Path=/; Max-Age=${duration}; Secure; HttpOnly; SameSite=Strict`;
+}
+
+async function validCode(expected, provided) {
+  if (typeof provided !== 'string' || !/^[A-Za-z0-9_-]{43,128}$/.test(provided)) return false;
+  const message = encoder.encode('folio:admin-login:v1');
+  const suppliedKey = await hmacKey(provided);
+  const signature = await crypto.subtle.sign('HMAC', suppliedKey, message);
+  const expectedKey = await hmacKey(expected);
+  return crypto.subtle.verify('HMAC', expectedKey, signature, message);
+}
+
+async function sessionValue(code) {
+  const expires = Math.floor(Date.now() / 1000) + sessionDuration;
+  const payload = `${expires}.${crypto.randomUUID()}`;
+  const signature = await crypto.subtle.sign(
+    'HMAC', await hmacKey(code), encoder.encode('folio:admin-session:v1:' + payload),
+  );
+  return `${payload}.${urlBase64(new Uint8Array(signature))}`;
+}
+
+async function hasSession(request, env) {
+  const token = request.headers.get('Cookie')
+    ?.split(';')
+    .map(part => part.trim())
+    .find(part => part.startsWith(sessionCookie + '='))
+    ?.slice(sessionCookie.length + 1);
+  if (!token) return false;
+
+  const match = /^(\d{1,12})\.([a-f0-9-]{36})\.([A-Za-z0-9_-]{43})$/.exec(token);
+  if (!match) return false;
+  const [, expires, nonce, signature] = match;
+  const now = Math.floor(Date.now() / 1000);
+  const expireTime = Number(expires);
+  if (expireTime <= now || expireTime > now + sessionDuration) return false;
+
+  const bytes = Uint8Array.from(atob(signature.replaceAll('-', '+').replaceAll('_', '/')), char => char.charCodeAt(0));
+  const message = encoder.encode(`folio:admin-session:v1:${expires}.${nonce}`);
+  return crypto.subtle.verify('HMAC', await hmacKey(adminCode(env)), bytes, message);
+}
+
+function requireSameOrigin(request, url) {
+  if (request.headers.get('Origin') !== url.origin) {
+    throw new RequestError(403, '관리자 화면에서 다시 시도해주세요.');
+  }
+}
+
+async function readLimited(request, limit) {
+  const length = Number(request.headers.get('Content-Length'));
+  if (length > limit) throw new RequestError(413, '파일 또는 요청의 크기가 너무 큽니다.');
+  if (!request.body) throw new RequestError(400, '전송된 데이터가 비어 있습니다.');
+
+  const reader = request.body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel();
+        throw new RequestError(413, '파일 또는 요청의 크기가 너무 큽니다.');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+function mimeType(request) {
+  return request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase();
+}
+
+async function readJson(request, limit) {
+  if (mimeType(request) !== 'application/json') {
+    throw new RequestError(415, '관리자 화면에서 다시 제출해주세요.');
+  }
+  const bytes = await readLimited(request, limit);
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch {
+    throw new RequestError(400, '제출한 정보를 읽을 수 없습니다.');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new RequestError(400, '제출할 정보를 확인해주세요.');
+  }
+  return value;
+}
+
+async function login(request, env) {
+  const expected = adminCode(env);
+  let decision;
+  try {
+    const key = request.headers.get('CF-Connecting-IP') || 'local';
+    decision = await env.LOGIN_RATE_LIMITER?.limit({ key });
+  } catch {
+    // An unavailable limiter cannot authorize a login.
+  }
+  if (typeof decision?.success !== 'boolean') throw new RequestError(503, '관리자 로그인 보호 기능을 사용할 수 없습니다. 잠시 후 다시 시도해주세요.');
+  if (!decision.success) throw new RequestError(429, '접속 시도가 많습니다. 잠시 후 다시 시도해주세요.', 60);
+  const data = await readJson(request, 1024);
+  if (!await validCode(expected, data.code)) {
+    throw new RequestError(401, '접속 코드가 맞지 않습니다.');
+  }
+  return json({ ok: true }, 200, { 'Set-Cookie': cookieValue(await sessionValue(expected)) });
+}
+
+async function staticAsset(url, request, env, path) {
+  const assetUrl = new URL(path, url.origin);
+  const pdfLibrary = path.startsWith('/vendor/pdfjs/');
+  const assetHeaders = new Headers();
+  const validator = request.headers.get('If-None-Match');
+  if (pdfLibrary && validator) assetHeaders.set('If-None-Match', validator);
+  const response = await env.ASSETS.fetch(new Request(assetUrl, { method: request.method, headers: assetHeaders }));
+  const headers = new Headers(response.headers);
+  for (const [key, value] of Object.entries(securityHeaders)) headers.set(key, value);
+  if (pdfLibrary && (response.status === 200 || response.status === 304) && headers.has('ETag')) {
+    headers.set('Cache-Control', 'private, no-cache');
+  }
+  return new Response(response.body, { status: response.status, headers });
+}
+
+function gitConfiguration(env) {
+  const mode = env.FOLIO_STORAGE_MODE ?? (env.FOLIO_CONTENT_REPOSITORY || env.FOLIO_CONTENT_BRANCH ? 'private' : 'single');
+  if (!['private', 'single'].includes(mode)) throw new RequestError(503, '관리자의 저장 방식을 확인해주세요.');
+  const repository = env.FOLIO_CONTENT_REPOSITORY ?? (mode === 'single' ? env.GITHUB_REPOSITORY : undefined);
+  const token = env.GITHUB_TOKEN;
+  const branch = env.FOLIO_CONTENT_BRANCH || (mode === 'single' && env.GITHUB_BRANCH) || 'main';
+  if (mode === 'private' && !repository) throw new RequestError(503, '별도의 비공개 작품 저장소를 지정해주세요.');
+  if (typeof repository !== 'string' || !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
+      ['.', '..'].includes(repository.split('/')[1]) ||
+      typeof token !== 'string' || !token.length ||
+      typeof branch !== 'string' || !branch.split('/').every(part => part && part !== '.' && part !== '..')) {
+    throw new RequestError(503, '관리자 서버에 GitHub 저장소와 쓰기 권한이 설정되어야 합니다.');
+  }
+  const ref = 'heads/' + branch.split('/').map(encodeURIComponent).join('/');
+  return { repository, token, branch, ref, privateContent: mode === 'private' };
+}
+
+async function github(git, path, { method = 'GET', body, accept = 'application/vnd.github+json', allowed = [] } = {}) {
+  const requestBody = typeof body === 'string' ? body : JSON.stringify(body);
+  let response;
+  try {
+    response = await fetch('https://api.github.com/repos/' + git.repository + path, {
+      method,
+      redirect: 'error',
+      cache: 'no-store',
+      headers: {
+        'Accept': accept,
+        'Authorization': 'Bearer ' + git.token,
+        'User-Agent': 'Folio-Admin',
+        'X-GitHub-Api-Version': githubVersion,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: requestBody,
+    });
+  } catch {
+    throw new RequestError(502, 'GitHub에 연결할 수 없습니다. 다시 시도해주세요.');
+  }
+  if (response.ok || allowed.includes(response.status)) return response;
+  const errorBody = await response.clone().json().catch(() => ({}));
+  if (response.status === 429 || response.headers.get('x-ratelimit-remaining') === '0' ||
+      (response.status === 403 && (response.headers.has('retry-after') ||
+        /secondary rate|rate limit|abuse detection/i.test(errorBody.message || '')))) {
+    const retryHeader = response.headers.get('retry-after');
+    const retrySeconds = retryHeader && /^\d+$/.test(retryHeader)
+      ? Number(retryHeader) : (Date.parse(retryHeader) - Date.now()) / 1000;
+    const resetSeconds = Number(response.headers.get('x-ratelimit-reset')) - Date.now() / 1000;
+    const retryAfter = Math.max(1, Math.ceil(Number.isFinite(retrySeconds) ? retrySeconds : resetSeconds > 0 ? resetSeconds : 60));
+    throw new RequestError(429, 'GitHub 요청 한도에 도달했습니다. 잠시 후 다시 시도해주세요.', retryAfter);
+  }
+  if ([401, 403, 404].includes(response.status)) {
+    throw new RequestError(502, 'GitHub 저장소, 연결된 브랜치와 토큰 권한을 확인해주세요.');
+  }
+  throw new RequestError(502, 'GitHub에 저장하지 못했습니다. 다시 시도해주세요.');
+}
+
+async function checkedRepository(env) {
+  const git = gitConfiguration(env);
+  if (git.privateContent) {
+    const metadata = await (await github(git, '')).json();
+    if (metadata.private !== true || metadata.visibility !== 'private' ||
+        metadata.full_name?.toLowerCase() !== git.repository.toLowerCase()) {
+      throw new RequestError(503, '설정한 작품 저장소의 이름과 비공개(Private) 상태를 확인해주세요.');
+    }
+  }
+  return git;
+}
+
+async function branchHead(git) {
+  const response = await github(git, '/git/ref/' + git.ref);
+  return (await response.json()).object.sha;
+}
+
+function isRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function siteDefaults(value) {
+  const site = isRecord(value) ? { ...value } : {};
+  delete site.projectSort;
+  return {
+    ...site,
+    title: typeof site.title === 'string' ? site.title : '',
+    about: { heading: '', text: '', ...(isRecord(site.about) ? site.about : {}) },
+    contact: { text: '', email: '', links: [], ...(isRecord(site.contact) ? site.contact : {}) },
+    projectTags: site.projectTags === undefined ? STOCK_PROJECT_TAGS.map(tag => ({ ...tag })) : site.projectTags,
+    revision: site.revision ?? null,
+  };
+}
+
+async function readCatalog(git, ref) {
+  const response = await github(git, '/contents/' + catalogPath + '?ref=' + encodeURIComponent(ref ?? git.branch), {
+    accept: 'application/vnd.github.raw+json',
+    allowed: [404],
+  });
+  if (response.status === 404) {
+    if (git.privateContent) throw new RequestError(503, '작품 저장소의 지정한 브랜치에 dist/catalog.json을 먼저 올려주세요.');
+    // A missing catalogue is valid only when its repository and branch exist.
+    if (ref === undefined) await branchHead(git);
+    return { books: [], projects: [], order: [], site: siteDefaults() };
+  }
+
+  let catalog;
+  try {
+    catalog = await response.json();
+  } catch {
+    throw new RequestError(502, 'GitHub의 책 목록 파일을 읽을 수 없습니다.');
+  }
+  return normalizeCatalog(catalog);
+}
+
+function normalizeCatalog(catalog) {
+  if (!catalog || !Array.isArray(catalog.books) ||
+      (catalog.projects !== undefined && !Array.isArray(catalog.projects))) {
+    throw new RequestError(502, '책 목록 파일 형식을 확인해주세요.');
+  }
+  const projects = catalog.projects || [];
+  const items = [...catalog.books, ...projects];
+  if (items.some(item => !item || typeof item.id !== 'string' || typeof item.title !== 'string') ||
+      new Set(items.map(item => item.id)).size !== items.length) {
+    throw new RequestError(502, '작품 목록 파일 형식을 확인해주세요.');
+  }
+  const ids = new Set(items.map(item => item.id));
+  const order = [...new Set(Array.isArray(catalog.order) ? catalog.order.filter(id => ids.has(id)) : [])];
+  const orderedIds = new Set(order);
+  return {
+    ...catalog, projects,
+    order: [...order, ...items.map(item => item.id).filter(id => !orderedIds.has(id))],
+    site: siteDefaults(catalog.site),
+  };
+}
+
+async function currentSnapshot(env) {
+  if (env.LOCAL_STORE) {
+    const { head, catalog } = await env.LOCAL_STORE.snapshot();
+    return { head, catalog: normalizeCatalog(catalog) };
+  }
+  const git = await checkedRepository(env);
+  const head = await branchHead(git);
+  return { git, head, catalog: await readCatalog(git, head) };
+}
+
+function bytesMatch(bytes, prefix, offset = 0) {
+  return prefix.every((byte, i) => bytes[offset + i] === byte);
+}
+
+function imageMatches(bytes, ext) {
+  if (ext === 'jpg') return bytesMatch(bytes, [255, 216, 255]);
+  if (ext === 'png') return bytesMatch(bytes, [137, 80, 78, 71, 13, 10, 26, 10]);
+  return bytesMatch(bytes, [82, 73, 70, 70]) && bytesMatch(bytes, [87, 69, 66, 80], 8);
+}
+
+function imageDimensions(bytes, ext) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (ext === 'png' && bytes.length >= 24 && bytesMatch(bytes, [73, 72, 68, 82], 12)) {
+    return [view.getUint32(16), view.getUint32(20)];
+  }
+  if (ext === 'webp' && bytes.length >= 30) {
+    if (bytesMatch(bytes, [86, 80, 56, 88], 12)) {
+      const integer24 = offset => bytes[offset] + bytes[offset + 1] * 256 + bytes[offset + 2] * 65536;
+      return [integer24(24) + 1, integer24(27) + 1];
+    }
+    if (bytesMatch(bytes, [86, 80, 56, 76], 12) && bytes[20] === 47) {
+      return [1 + bytes[21] + ((bytes[22] & 63) << 8),
+        1 + (bytes[22] >> 6) + (bytes[23] << 2) + ((bytes[24] & 15) << 10)];
+    }
+    if (bytesMatch(bytes, [86, 80, 56, 32], 12) && bytesMatch(bytes, [157, 1, 42], 23)) {
+      return [view.getUint16(26, true) & 16383, view.getUint16(28, true) & 16383];
+    }
+  }
+  if (ext === 'jpg') {
+    let offset = 2;
+    while (offset + 4 <= bytes.length) {
+      if (bytes[offset++] !== 255) break;
+      while (bytes[offset] === 255) offset += 1;
+      const marker = bytes[offset++];
+      if (marker === 218 || marker === 217) break;
+      if (marker === 1 || (marker >= 208 && marker <= 215)) continue;
+      if (offset + 2 > bytes.length) break;
+      const size = view.getUint16(offset);
+      if (size < 2 || offset + size > bytes.length) break;
+      if ([192, 193, 194, 195, 197, 198, 199, 201, 202, 203, 205, 206, 207].includes(marker) && size >= 7) {
+        return [view.getUint16(offset + 5), view.getUint16(offset + 3)];
+      }
+      offset += size;
+    }
+  }
+  return null;
+}
+
+async function uploadAsset(request, env) {
+  const ext = imageExtensions.get(mimeType(request));
+  if (!ext) throw new RequestError(415, 'JPG, PNG 또는 WebP 이미지 파일을 선택해주세요.');
+  const bytes = await readLimited(request, maxAssetBytes);
+  if (!imageMatches(bytes, ext)) throw new RequestError(415, '이미지 파일 형식을 확인해주세요.');
+  const dimensions = imageDimensions(bytes, ext);
+  if (!dimensions || dimensions.some(value => value < 1 || value > 16384) || dimensions[0] * dimensions[1] > 64000000) {
+    throw new RequestError(400, '이미지는 가로·세로 16,384px 이하, 총 6,400만 픽셀 이하로 준비해주세요.');
+  }
+  if (env.LOCAL_STORE) {
+    const sha = await env.LOCAL_STORE.stage(bytes);
+    return json({ sha, ext, ratio: dimensions[0] / dimensions[1] }, 201);
+  }
+  const git = await checkedRepository(env);
+  const response = await github(git, '/git/blobs', {
+    method: 'POST',
+    // Generated base64 contains no JSON delimiters, so it needs no string escaping.
+    body: '{"encoding":"base64","content":"' + base64(bytes) + '"}',
+  });
+  return json({ sha: (await response.json()).sha, ext, ratio: dimensions[0] / dimensions[1] }, 201);
+}
+
+function validText(value, limit, label, required = false) {
+  if (value == null && !required) return '';
+  if (typeof value !== 'string' || value.length > limit || (required && !value.trim())) {
+    throw new RequestError(400, `${label}을(를) 확인해주세요.`);
+  }
+  return value.trim();
+}
+
+function positive(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function mutationId(value) {
+  const id = value ?? crypto.randomUUID();
+  if (typeof id !== 'string' ||
+      !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) {
+    throw new RequestError(400, '작품 등록 번호를 확인해주세요.');
+  }
+  return id.toLowerCase();
+}
+
+function itemId(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,150}$/.test(value)) {
+    throw new RequestError(400, '작품 번호를 확인해주세요.');
+  }
+  return value;
+}
+
+function validAsset(value) {
+  if (!isRecord(value) || typeof value.sha !== 'string' || !gitSha.test(value.sha) ||
+      !['jpg', 'png', 'webp'].includes(value.ext)) {
+    throw new RequestError(400, '이미지를 먼저 업로드해주세요.');
+  }
+  return { sha: value.sha, ext: value.ext };
+}
+
+function references(item) {
+  return [
+    item.thumbnailSrc,
+    ...Object.values(item.coverImages || {}),
+    ...(item.pages || []).map(page => page.imageSrc),
+    ...(item.images || []).map(image => image.imageSrc),
+    ...(item.galleryImages || []).map(image => image.imageSrc),
+  ].filter(path => typeof path === 'string').map(path => path.replace(/^\.\//, ''));
+}
+
+function allReferences(catalog) {
+  const siteImage = catalog.site?.about?.imageSrc;
+  return [
+    ...[...catalog.books, ...catalog.projects].flatMap(references),
+    ...(typeof siteImage === 'string' ? [siteImage.replace(/^\.\//, '')] : []),
+  ];
+}
+
+function enforceAssetLimit(catalog) {
+  if (allReferences(catalog).length > maxCatalogImages) {
+    throw new RequestError(400, '사이트 전체 이미지는 19,000개까지 등록할 수 있습니다. 기존 작품을 정리해주세요.');
+  }
+}
+
+function projectTags(value) {
+  if (!Array.isArray(value) || value.length > 100) {
+    throw new RequestError(400, '프로젝트 분류는 100개까지 등록할 수 있습니다.');
+  }
+  const ids = new Set();
+  return value.map(tag => {
+    if (!isRecord(tag) || typeof tag.id !== 'string' || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(tag.id) || ids.has(tag.id)) {
+      throw new RequestError(400, '중복되지 않는 올바른 분류 번호를 사용해주세요.');
+    }
+    const ko = validText(tag.ko, 80, '국문 분류명', true);
+    if (tag.en !== undefined && typeof tag.en !== 'string') throw new RequestError(400, '영문 분류명을 확인해주세요.');
+    const en = validText(tag.en, 80, '영문 분류명');
+    ids.add(tag.id);
+    return { id: tag.id, ko, en };
+  });
+}
+
+function checkRemovedTags(catalog, nextTags) {
+  const nextIds = new Set(nextTags.map(tag => tag.id));
+  const removed = catalog.site.projectTags.filter(tag => !nextIds.has(tag.id));
+  if (!removed.length) return;
+  const used = new Set([
+    ...catalog.books.flatMap(item => idsFor(item, 'book', catalog.site.projectTags)),
+    ...catalog.projects.flatMap(item => idsFor(item, 'project', catalog.site.projectTags)),
+  ]);
+  const blocked = removed.filter(tag => used.has(tag.id));
+  if (blocked.length) {
+    throw new RequestError(409, blocked.map(tag => tag.ko).join(', ') +
+      ' 분류를 사용 중인 작업이 있습니다. 해당 작업의 분류를 먼저 바꿔주세요.', undefined, 'TAG_IN_USE');
+  }
+}
+
+function assignTagIds(item, submitted, existing, kind, tags, retrying) {
+  if (submitted !== undefined && (!Array.isArray(submitted) || submitted.length > 100 ||
+      submitted.some(id => typeof id !== 'string') || new Set(submitted).size !== submitted.length)) {
+    throw new RequestError(400, '작업의 분류 목록을 확인해주세요.');
+  }
+  const ids = retrying ? item.tagIds : submitted ?? idsFor(existing || {}, kind, tags);
+  const allowed = new Set(tags.map(tag => tag.id));
+  if (ids.some(id => !allowed.has(id))) {
+    throw new RequestError(retrying ? 409 : 400,
+      '분류 목록이 변경되었거나 없는 분류가 선택되어 있습니다. 최신 목록에서 다시 선택해주세요.', undefined, 'UNKNOWN_TAG');
+  }
+  item.tagIds = [...ids];
+}
+
+function englishTranslations(submitted, saved, kind) {
+  if (submitted === undefined) return saved;
+  if (!isRecord(submitted) || (submitted.en !== undefined && !isRecord(submitted.en))) {
+    throw new RequestError(400, '영문 번역 정보를 확인해주세요.');
+  }
+  if (submitted.en === undefined) return saved;
+  const translations = isRecord(saved) ? { ...saved } : {};
+  const previous = isRecord(translations.en) ? translations.en : {};
+  const source = submitted.en;
+  const en = { ...previous };
+  function textFields(target, input, fields) {
+    for (const [field, limit] of fields) {
+      if (input[field] !== undefined) {
+        if (typeof input[field] !== 'string') throw new RequestError(400, '영문 번역은 텍스트로 입력해주세요.');
+        target[field] = validText(input[field], limit, '영문 번역');
+      } else if (target[field] === undefined) {
+        target[field] = '';
+      }
+    }
+  }
+  textFields(en, source, [['title', 160]]);
+  if (kind === 'site') {
+    for (const [field, fields] of [
+      ['about', [['heading', 200], ['text', 12000]]],
+      ['contact', [['text', 6000]]],
+    ]) {
+      if (source[field] !== undefined && !isRecord(source[field])) {
+        throw new RequestError(400, '영문 번역 정보를 확인해주세요.');
+      }
+      en[field] = isRecord(previous[field]) ? { ...previous[field] } : {};
+      textFields(en[field], source[field] || {}, fields);
+    }
+  } else {
+    textFields(en, source, [['category', 100]]);
+    if (source.description !== undefined) {
+      if (typeof source.description !== 'string') throw new RequestError(400, '영문 소개는 텍스트로 입력해주세요.');
+      en.description = [validText(source.description, 6000, '영문 소개')];
+    } else if (en.description === undefined) {
+      en.description = [''];
+    }
+    if (source.language !== undefined) textFields(en, source, [['language', 60]]);
+  }
+  translations.en = en;
+  return translations;
+}
+
+function metadata(data, existing) {
+  const item = { ...existing };
+  item.title = data.title === undefined && existing ? existing.title : validText(data.title, 160, '제목', true);
+  for (const [field, limit, label] of [['category', 100, '분류'], ['year', 40, '연도']]) {
+    if (data[field] !== undefined || !existing) item[field] = validText(data[field], limit, label);
+  }
+  if (data.description !== undefined || !existing) {
+    item.description = [validText(data.description, 6000, '소개')];
+  }
+  if (data.published !== undefined && typeof data.published !== 'boolean') {
+    throw new RequestError(400, '공개 여부를 확인해주세요.');
+  }
+  item.published = data.published ?? existing?.published ?? true;
+  const translations = englishTranslations(data.translations, existing?.translations, 'item');
+  if (translations !== undefined) item.translations = translations;
+  return item;
+}
+
+function imageList(values, savedImages, prefix, addImage, name, allowEmpty = false) {
+  if (!Array.isArray(values) || (!values.length && !allowEmpty) || values.length > maxPages) {
+    throw new RequestError(400, allowEmpty ? '갤러리 이미지는 1,000장까지 등록할 수 있습니다.' : '프로젝트 이미지는 1~1,000장까지 등록할 수 있습니다.');
+  }
+  const saved = new Map(savedImages.map(image => [image.imageSrc.replace(/^\.\//, ''), image]));
+  return values.map((image, index) => {
+    if (!isRecord(image)) throw new RequestError(400, '등록할 이미지를 확인해주세요.');
+    let alt = validText(image.alt, 500, '이미지 설명');
+    let ratio = image.ratio;
+    if (ratio !== undefined && (!positive(ratio) || ratio < 1 / 16384 || ratio > 16384)) {
+      throw new RequestError(400, '이미지의 가로와 세로 비율을 확인해주세요.');
+    }
+    let imageSrc;
+    if (image.imageSrc !== undefined) {
+      imageSrc = typeof image.imageSrc === 'string' ? image.imageSrc.replace(/^\.\//, '') : '';
+      if (!imageSrc.startsWith(prefix) || !saved.has(imageSrc)) {
+        throw new RequestError(400, '현재 작품에 등록된 이미지만 재사용할 수 있습니다.');
+      }
+      if (image.alt === undefined) alt = saved.get(imageSrc).alt || '';
+      if (ratio === undefined) ratio = saved.get(imageSrc).ratio;
+    } else {
+      imageSrc = addImage(image, name + '-' + String(index + 1).padStart(4, '0'));
+    }
+    return { imageSrc, ...(alt ? { alt } : {}), ...(ratio !== undefined ? { ratio } : {}) };
+  });
+}
+
+function applyThumbnail(item, existing, assets, addImage, kind) {
+  const primary = kind === 'book' ? item.coverImages.front : item.images[0].imageSrc;
+  const previous = kind === 'book' ? existing?.coverImages?.front : existing?.images?.[0]?.imageSrc;
+  if (assets.thumbnail === undefined) {
+    if (primary !== previous) delete item.thumbnailSrc;
+    return;
+  }
+  delete item.thumbnailSrc;
+  if (assets.thumbnail === null) return;
+  const thumbnail = validAsset(assets.thumbnail);
+  const submittedPrimary = kind === 'book' ? assets.front : assets.images?.[0];
+  if (thumbnail.sha === submittedPrimary?.sha && thumbnail.ext === submittedPrimary?.ext) return;
+  item.thumbnailSrc = addImage(thumbnail, 'thumbnail');
+}
+
+function buildItem(data, existing, kind, registrationId) {
+  const item = metadata(data, existing);
+  const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 42) || kind;
+  item.id = existing?.id || slug + '-' + registrationId;
+  item.revision = crypto.randomUUID();
+  item.lastMutationId = registrationId;
+  const tree = [];
+  const prefix = 'assets/' + (kind === 'book' ? 'books/' : 'projects/') + item.id + '/';
+  const version = existing ? registrationId + '-' : '';
+  function addImage(file, name) {
+    const image = validAsset(file);
+    const path = prefix + version + name + '.' + image.ext;
+    tree.push({ path: 'dist/' + path, mode: '100644', type: 'blob', sha: image.sha });
+    return path;
+  }
+  const assets = data.assets === undefined ? {} : data.assets;
+  if (!isRecord(assets)) {
+    throw new RequestError(400, '업로드할 이미지를 확인해주세요.');
+  }
+  if (kind === 'project') {
+    if (assets.images !== undefined || !existing) {
+      item.images = imageList(assets.images, existing?.images || [], prefix, addImage, 'image');
+    }
+    applyThumbnail(item, existing, assets, addImage, kind);
+    return { item, tree };
+  }
+
+  const bindingType = data.bindingType ?? existing?.bindingType ?? 'paperback';
+  if (!bindingTypes.has(bindingType)) throw new RequestError(400, '제본 방식을 확인해주세요.');
+  item.bindingType = bindingType;
+  for (const field of ['coverRatio', 'pageRatio']) {
+    const value = data[field] === undefined ? existing?.[field] : data[field];
+    if (!positive(value) || value < 0.05 || value > 20) {
+      throw new RequestError(400, '표지와 내지의 비율을 확인해주세요.');
+    }
+    item[field] = value;
+  }
+  if (data.language !== undefined || !existing) item.language = validText(data.language, 60, '언어');
+  if (data.trimSizeMm !== undefined || !existing) {
+    if (data.trimSizeMm != null && (!Array.isArray(data.trimSizeMm) || data.trimSizeMm.length !== 2 ||
+        !data.trimSizeMm.every(value => positive(value) && value >= 10 && value <= 5000))) {
+      throw new RequestError(400, '책의 가로와 세로 크기를 확인해주세요.');
+    }
+    delete item.trimSizeMm;
+    if (data.trimSizeMm != null) item.trimSizeMm = data.trimSizeMm;
+  }
+  if (data.spineWidthMm !== undefined || !existing) {
+    if (data.spineWidthMm != null && (!positive(data.spineWidthMm) || data.spineWidthMm > 500)) {
+      throw new RequestError(400, '책등 두께를 확인해주세요.');
+    }
+    delete item.spineWidthMm;
+    if (data.spineWidthMm != null) item.spineWidthMm = data.spineWidthMm;
+  }
+  item.coverImages = { ...existing?.coverImages };
+  for (const face of ['front', 'back', 'spine']) {
+    if (assets[face] === undefined) continue;
+    if (assets[face] === null && face !== 'front') delete item.coverImages[face];
+    else item.coverImages[face] = addImage(assets[face], face);
+  }
+  if (!item.coverImages.front) throw new RequestError(400, '앞표지를 업로드해주세요.');
+  if (assets.pages !== undefined || !existing) {
+    if (!Array.isArray(assets.pages) || !assets.pages.length || assets.pages.length > maxPages) {
+      throw new RequestError(400, '내지는 1~1,000쪽까지 등록할 수 있습니다.');
+    }
+    item.pages = assets.pages.map((file, index) => ({ imageSrc: addImage(file, 'page-' + String(index + 1).padStart(4, '0')) }));
+  }
+  if (assets.galleryImages !== undefined) {
+    item.galleryImages = imageList(assets.galleryImages === null ? [] : assets.galleryImages,
+      existing?.galleryImages || [], prefix, addImage, 'gallery', true);
+  }
+  applyThumbnail(item, existing, assets, addImage, kind);
+  return { item, tree };
+}
+
+function checkRevision(existing, data) {
+  if ((existing.revision ?? null) !== (data.baseRevision ?? null)) {
+    throw new RequestError(409, '다른 창에서 수정한 내용이 있습니다. 목록을 새로 불러온 뒤 다시 수정해주세요.', undefined, 'REVISION_CONFLICT');
+  }
+}
+
+function contactEmail(value) {
+  const email = validText(value, 254, '이메일').replace(/^mailto:/i, '');
+  if (email && !/^[A-Za-z0-9.!$'*+=^_`{|}~-]+@(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,63}$/.test(email)) {
+    throw new RequestError(400, '이메일 주소를 확인해주세요.');
+  }
+  return email;
+}
+
+function contactLinks(value) {
+  if (!Array.isArray(value) || value.length > 30) {
+    throw new RequestError(400, '연락처 링크는 30개까지 등록할 수 있습니다.');
+  }
+  return value.map(link => {
+    if (!isRecord(link)) throw new RequestError(400, '연락처 링크를 확인해주세요.');
+    const label = validText(link.label, 100, '링크 이름', true);
+    const address = validText(link.url, 2048, '링크 주소', true);
+    if (/[\u0000-\u001f\u007f]/.test(link.url)) {
+      throw new RequestError(400, '연락처 링크에 제어 문자를 사용할 수 없습니다.');
+    }
+    let url;
+    try {
+      url = new URL(address);
+    } catch {
+      throw new RequestError(400, '연락처 링크는 http 또는 https 주소로 입력해주세요.');
+    }
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password ||
+        /[\u0000-\u0020\u007f]/.test(address)) {
+      throw new RequestError(400, '연락처 링크는 http 또는 https 주소로 입력해주세요.');
+    }
+    return { label, url: url.href };
+  });
+}
+
+async function saveSite(request, env) {
+  const data = await readJson(request, 128 * 1024);
+  const registrationId = mutationId(data.registrationId);
+  let prepared;
+  return mutateCatalog(env, catalog => {
+    const existing = catalog.site;
+    if (existing.lastMutationId === registrationId) {
+      return { unchanged: true, response: { site: existing } };
+    }
+    checkRevision(existing, data);
+    if (!prepared) {
+      for (const field of ['about', 'contact', 'assets']) {
+        if (data[field] !== undefined && !isRecord(data[field])) {
+          throw new RequestError(400, '사이트 설정을 확인해주세요.');
+        }
+      }
+      const site = {
+        ...existing, about: { ...existing.about }, contact: { ...existing.contact },
+        revision: crypto.randomUUID(), lastMutationId: registrationId,
+      };
+      const translations = englishTranslations(data.translations, existing.translations, 'site');
+      if (translations !== undefined) site.translations = translations;
+      if (data.title !== undefined) site.title = validText(data.title, 160, '사이트 제목');
+      if (data.projectTags !== undefined) site.projectTags = projectTags(data.projectTags);
+      for (const [field, limit] of [['heading', 200], ['text', 12000]]) {
+        if (data.about?.[field] !== undefined) site.about[field] = validText(data.about[field], limit, '소개');
+      }
+      if (data.contact?.text !== undefined) site.contact.text = validText(data.contact.text, 6000, '연락처 소개');
+      if (data.contact?.email !== undefined) site.contact.email = contactEmail(data.contact.email);
+      if (data.contact?.links !== undefined) site.contact.links = contactLinks(data.contact.links);
+      const tree = [];
+      if (data.assets?.about === null) delete site.about.imageSrc;
+      else if (data.assets?.about !== undefined) {
+        const image = validAsset(data.assets.about);
+        site.about.imageSrc = 'assets/site/' + registrationId + '/about.' + image.ext;
+        tree.push({ path: 'dist/' + site.about.imageSrc, mode: '100644', type: 'blob', sha: image.sha });
+      }
+      prepared = { site, tree };
+    }
+    checkRemovedTags(catalog, prepared.site.projectTags);
+    catalog.site = prepared.site;
+    return {
+      response: { site: prepared.site }, tree: [...prepared.tree],
+      cleanup: { kind: 'site' }, message: 'Update site settings',
+    };
+  });
+}
+
+async function cleanupAssets(git, baseTree, id, kind, catalog) {
+  const prefix = kind === 'site' ? 'dist/assets/site/'
+    : 'dist/assets/' + (kind === 'book' ? 'books/' : 'projects/') + itemId(id) + '/';
+  const response = await github(git, '/git/trees/' + baseTree + '?recursive=1');
+  const saved = await response.json();
+  if (saved.truncated || !Array.isArray(saved.tree)) {
+    throw new RequestError(502, '저장소의 전체 파일 목록을 읽을 수 없습니다. 다시 시도해주세요.');
+  }
+  const retained = new Set(allReferences(catalog).map(path => 'dist/' + path));
+  return saved.tree.filter(entry => entry.type === 'blob' && entry.path.startsWith(prefix) && !retained.has(entry.path))
+    .map(entry => ({ path: entry.path, mode: '100644', type: 'blob', sha: null }));
+}
+
+async function mutateCatalog(env, transform) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const { git, head, catalog } = await currentSnapshot(env);
+    const previousAssets = env.LOCAL_STORE ? allReferences(catalog) : null;
+    const result = transform(catalog);
+    if (result.unchanged) return json({ ...result.response, commit: head });
+    catalog.demo = false;
+    enforceAssetLimit(catalog);
+    if (env.LOCAL_STORE) {
+      const retained = new Set(allReferences(catalog));
+      const removed = previousAssets.filter(path => !retained.has(path));
+      const commit = await env.LOCAL_STORE.publish(head, catalog, result.tree || [], removed);
+      if (commit) return json({ ...result.response, commit }, result.created ? 201 : 200);
+      continue;
+    }
+    const baseCommit = await github(git, '/git/commits/' + head).then(response => response.json());
+    let tree = result.tree || [];
+    if (result.cleanup) {
+      tree = [...tree, ...await cleanupAssets(git, baseCommit.tree.sha, result.cleanup.id, result.cleanup.kind, catalog)];
+    }
+    tree.push({ path: catalogPath, mode: '100644', type: 'blob', content: JSON.stringify(catalog, null, 2) + '\n' });
+    const newTree = await github(git, '/git/trees', {
+      method: 'POST', body: { base_tree: baseCommit.tree.sha, tree },
+    }).then(response => response.json());
+    const commit = await github(git, '/git/commits', {
+      method: 'POST', body: { message: result.message.replace(/[\r\n]+/g, ' '), tree: newTree.sha, parents: [head] },
+    }).then(response => response.json());
+    const update = await github(git, '/git/refs/' + git.ref, {
+      method: 'PATCH', body: { sha: commit.sha, force: false }, allowed: [409, 422],
+    });
+    if (update.ok) return json({ ...result.response, commit: commit.sha }, result.created ? 201 : 200);
+    if (await branchHead(git) === head) {
+      throw new RequestError(409, '브랜치 쓰기 제한을 확인하고 다시 시도해주세요.');
+    }
+  }
+  throw new RequestError(409, '다른 변경사항이 게시 중입니다. 잠시 후 다시 시도해주세요.');
+}
+
+async function saveItem(request, env, kind) {
+  const data = await readJson(request, 1024 * 1024);
+  const registrationId = mutationId(data.registrationId);
+  if (data.id !== undefined) itemId(data.id);
+  let prepared;
+  return mutateCatalog(env, catalog => {
+    const collection = kind === 'book' ? 'books' : 'projects';
+    const entries = catalog[collection];
+    const existing = data.id === undefined ? null : entries.find(item => item.id === data.id);
+    if (data.id !== undefined && !existing) throw new RequestError(404, '작품을 찾을 수 없습니다.');
+    const replay = existing?.lastMutationId === registrationId ? existing : data.id === undefined
+      ? entries.find(item => item.id.endsWith('-' + registrationId)) : null;
+    if (replay) return { unchanged: true, response: { [kind]: replay } };
+    if (existing) checkRevision(existing, data);
+    const retrying = Boolean(prepared);
+    if (!prepared) prepared = buildItem(data, existing, kind, registrationId);
+    const { item, tree } = prepared;
+    assignTagIds(item, data.tagIds, existing, kind, catalog.site.projectTags, retrying);
+    const otherItems = [...catalog.books, ...catalog.projects].filter(entry => entry.id !== existing?.id);
+    if (otherItems.some(entry => entry.id === item.id)) throw new RequestError(409, '이미 사용 중인 작품 번호입니다.');
+    catalog[collection] = existing ? entries.map(entry => entry.id === item.id ? item : entry) : [...entries, item];
+    if (!existing) catalog.order.push(item.id);
+    return {
+      response: { [kind]: item }, tree: [...tree], created: !existing,
+      cleanup: existing ? { id: existing.id, kind } : null,
+      message: (existing ? 'Update ' : 'Register ') + kind + ': ' + item.title,
+    };
+  });
+}
+
+async function deleteItem(request, env) {
+  const data = await readJson(request, 2048);
+  const id = itemId(data.id);
+  if (!['book', 'project'].includes(data.kind)) throw new RequestError(400, '작품 종류를 확인해주세요.');
+  return mutateCatalog(env, catalog => {
+    const collection = data.kind === 'book' ? 'books' : 'projects';
+    const existing = catalog[collection].find(item => item.id === id);
+    if (!existing) return { unchanged: true, response: { ok: true, id } };
+    checkRevision(existing, data);
+    catalog[collection] = catalog[collection].filter(item => item.id !== id);
+    catalog.order = catalog.order.filter(entry => entry !== id);
+    return { response: { ok: true, id }, cleanup: { id, kind: data.kind }, message: 'Delete ' + data.kind + ': ' + existing.title };
+  });
+}
+
+async function reorderItems(request, env) {
+  const data = await readJson(request, 4 * 1024 * 1024);
+  if (!Array.isArray(data.order) || data.order.some(id => typeof id !== 'string')) {
+    throw new RequestError(400, '작품 순서를 확인해주세요.');
+  }
+  if (data.baseOrder !== undefined &&
+      (!Array.isArray(data.baseOrder) || data.baseOrder.some(id => typeof id !== 'string'))) {
+    throw new RequestError(400, '기존 작품 순서를 확인해주세요.');
+  }
+  let initialOrder;
+  return mutateCatalog(env, catalog => {
+    const previous = JSON.stringify(catalog.order);
+    if (data.baseOrder !== undefined && JSON.stringify(data.order) !== previous &&
+        JSON.stringify(data.baseOrder) !== previous) {
+      throw new RequestError(409, '다른 창에서 작품 순서를 변경했습니다. 목록을 새로 불러와주세요.');
+    }
+    if (initialOrder !== undefined && initialOrder !== previous) {
+      throw new RequestError(409, '다른 창에서 작품 순서를 변경했습니다. 목록을 새로 불러와주세요.');
+    }
+    initialOrder = previous;
+    const ids = new Set([...catalog.books, ...catalog.projects].map(item => item.id));
+    if (data.order.length !== ids.size || new Set(data.order).size !== ids.size || data.order.some(id => !ids.has(id))) {
+      throw new RequestError(409, '작품 목록이 변경되었습니다. 모든 작품의 순서를 다시 확인해주세요.');
+    }
+    if (JSON.stringify(data.order) === previous) return { unchanged: true, response: { order: catalog.order } };
+    catalog.order = data.order;
+    return { response: { order: catalog.order }, message: 'Reorder portfolio' };
+  });
+}
+
+async function previewAsset(request, env, url) {
+  const path = url.searchParams.get('path')?.replace(/^\.\//, '');
+  if (!path || !/^assets\/(?:books|projects|site)\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|webp)$/.test(path)) {
+    throw new RequestError(400, '미리볼 이미지 경로를 확인해주세요.');
+  }
+  const { git, head, catalog } = await currentSnapshot(env);
+  if (!allReferences(catalog).includes(path)) throw new RequestError(404, '이미지를 찾을 수 없습니다.');
+  const body = env.LOCAL_STORE ? await env.LOCAL_STORE.readAsset(path)
+    : (await github(git, '/contents/dist/' + path + '?ref=' + encodeURIComponent(head), {
+      accept: 'application/vnd.github.raw+json',
+    })).body;
+  const extension = path.split('.').at(-1);
+  return new Response(body, { headers: { ...securityHeaders, 'Content-Type': 'image/' + (extension === 'jpg' ? 'jpeg' : extension) } });
+}
+
+const apiMethods = new Map([
+  ['/api/login', ['POST']],
+  ['/api/logout', ['POST']],
+  ['/api/catalog', ['GET']],
+  ['/api/preview', ['GET']],
+  ['/api/assets', ['POST']],
+  ['/api/books', ['GET', 'POST']],
+  ['/api/projects', ['POST']],
+  ['/api/site', ['POST']],
+  ['/api/delete', ['POST']],
+  ['/api/order', ['POST']],
+]);
+
+async function handle(request, env) {
+  const url = new URL(request.url);
+  const { pathname } = url;
+  if (request.method === 'POST') requireSameOrigin(request, url);
+  const methods = apiMethods.get(pathname);
+  if (methods && !methods.includes(request.method)) {
+    return json({ error: '지원하지 않는 요청 방식입니다.' }, 405, { Allow: methods.join(', ') });
+  }
+
+  if (pathname === '/api/login' && request.method === 'POST') return login(request, env);
+  if (pathname === '/api/logout' && request.method === 'POST') {
+    return json({ ok: true }, 200, { 'Set-Cookie': cookieValue('', 0) });
+  }
+
+  if (request.method === 'GET' || request.method === 'HEAD') {
+    if (['/', '/admin', '/admin/'].includes(pathname)) {
+      return staticAsset(url, request, env, await hasSession(request, env) ? '/index.html' : '/login.html');
+    }
+    if (['/style.css', '/login.js', '/favicon.ico'].includes(pathname)) {
+      return staticAsset(url, request, env, pathname);
+    }
+  }
+
+  if (!await hasSession(request, env)) throw new RequestError(401, '관리자 로그인이 필요합니다.');
+  if ((pathname === '/api/books' || pathname === '/api/catalog') && request.method === 'GET') {
+    const catalog = env.LOCAL_STORE ? (await currentSnapshot(env)).catalog : await readCatalog(await checkedRepository(env));
+    return json(pathname === '/api/books' ? { books: catalog.books } : catalog);
+  }
+  if (pathname === '/api/preview' && request.method === 'GET') return previewAsset(request, env, url);
+  if (pathname === '/api/assets' && request.method === 'POST') return uploadAsset(request, env);
+  if (pathname === '/api/books' && request.method === 'POST') return saveItem(request, env, 'book');
+  if (pathname === '/api/projects' && request.method === 'POST') return saveItem(request, env, 'project');
+  if (pathname === '/api/site' && request.method === 'POST') return saveSite(request, env);
+  if (pathname === '/api/delete' && request.method === 'POST') return deleteItem(request, env);
+  if (pathname === '/api/order' && request.method === 'POST') return reorderItems(request, env);
+  if ((request.method === 'GET' || request.method === 'HEAD') &&
+      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/image-encoding.js'].includes(pathname) || pathname.startsWith('/vendor/'))) {
+    return staticAsset(url, request, env, pathname);
+  }
+  throw new RequestError(404, '요청한 페이지를 찾을 수 없습니다.');
+}
+
+export default {
+  async fetch(request, env) {
+    try {
+      return await handle(request, env);
+    } catch (error) {
+      if (error instanceof RequestError) {
+        return json({ error: error.message, ...(error.code ? { code: error.code } : {}), ...(error.retryAfter ? { retryAfter: error.retryAfter } : {}) },
+          error.status, error.retryAfter ? { 'Retry-After': String(error.retryAfter) } : {});
+      }
+      return json({ error: '서버에서 오류가 발생했습니다. 다시 시도해주세요.' }, 500);
+    }
+  },
+};

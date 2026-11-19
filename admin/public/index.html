@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>작업 관리</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/admin.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="wordmark" href="/admin">관리자</a>
+    <nav class="admin-navigation" aria-label="관리 메뉴">
+      <button type="button" id="nav-work" aria-controls="work-panel" aria-current="page">작업 관리</button>
+      <button type="button" id="nav-site" aria-controls="site-panel">사이트 설정</button>
+    </nav>
+    <button type="button" class="text-button" id="logout">로그아웃</button>
+  </header>
+  <p class="help storage-note" id="storage-location" hidden>이 컴퓨터에 저장</p>
+  <main class="workspace" id="work-panel">
+    <section class="catalogue" aria-labelledby="catalogue-heading">
+      <header class="section-header heading-row"><h2 id="catalogue-heading" tabindex="-1">작업 목록</h2><button type="button" class="primary" id="new-item" disabled>작업 추가 +</button></header>
+      <div class="catalogue-filters">
+        <label for="catalog-search" class="visually-hidden">작업 검색</label><input type="search" id="catalog-search" placeholder="제목·세부 분류 검색">
+        <label for="catalog-kind" class="visually-hidden">작업 유형</label><select id="catalog-kind"><option value="">모든 유형</option><option value="book">책</option><option value="project">프로젝트</option></select>
+        <label for="catalog-tag" class="visually-hidden">프로젝트 태그</label><select id="catalog-tag"><option value="">모든 태그</option></select>
+        <label for="catalog-year" class="visually-hidden">작업 연도</label><select id="catalog-year"><option value="">모든 연도</option></select>
+      </div>
+      <div class="list-tools"><p class="help" id="catalogue-count" aria-live="polite"></p><button type="button" class="text-button" id="refresh-catalogue">새로고침</button></div>
+      <ul id="published-books"></ul>
+      <p class="help" id="catalogue-status" role="status" aria-live="polite">작업 목록을 불러오는 중입니다.</p>
+      <a class="text-button section-jump" href="#editor-heading">편집기로 ↓</a>
+    </section>
+    <div class="registration">
+      <header class="section-header heading-row"><h1 id="editor-heading" tabindex="-1">작업 추가</h1><a class="text-button section-jump" href="#catalogue-heading">목록으로 ↑</a></header>
+      <p class="help draft-notice" id="draft-notice" role="status"></p>
+      <form id="book-form">
+        <fieldset id="book-fields" disabled>
+          <section class="form-section" aria-labelledby="metadata-heading">
+            <h2 id="metadata-heading">기본 정보</h2>
+            <label for="kind">유형</label>
+            <select id="kind" name="kind"><option value="book">책</option><option value="project">프로젝트</option></select>
+            <div class="language-fields">
+              <div>
+                <label for="title">국문 제목</label><input id="title" name="title" type="text" maxlength="160" required>
+                <label for="description">국문 소개 <span>선택</span></label><textarea id="description" name="description" rows="5" maxlength="6000"></textarea>
+                <label for="category">세부 분류 · 국문 <span>선택</span></label><input id="category" name="category" type="text" maxlength="100">
+              </div>
+              <div>
+                <label for="title-en">영문 제목 <span>선택</span></label><input id="title-en" name="title-en" type="text" lang="en" maxlength="160">
+                <label for="description-en">영문 소개 <span>선택</span></label><textarea id="description-en" name="description-en" lang="en" rows="5" maxlength="6000"></textarea>
+                <label for="category-en">세부 분류 · 영문 <span>선택</span></label><input id="category-en" name="category-en" type="text" lang="en" maxlength="100">
+              </div>
+            </div>
+            <label for="year">연도 <span>선택</span></label><input id="year" name="year" type="text" maxlength="40">
+            <fieldset class="tag-selection" aria-labelledby="work-tags-heading">
+              <legend id="work-tags-heading">프로젝트 태그 <span>복수 선택</span></legend>
+              <div id="work-tags" class="tag-options"></div>
+            </fieldset>
+            <label class="check-label"><input id="published" name="published" type="checkbox" checked> 공개</label>
+          </section>
+          <fieldset id="book-specific">
+            <section class="form-section" aria-labelledby="book-heading">
+              <h2 id="book-heading">책 정보</h2>
+              <div class="fields two">
+                <div><label for="language">내지 언어 · 국문 <span>선택</span></label><input id="language" name="language" type="text" maxlength="60"></div>
+                <div><label for="language-en">내지 언어 · 영문 <span>선택</span></label><input id="language-en" name="language-en" type="text" lang="en" maxlength="60"></div>
+              </div>
+              <div class="fields three">
+                <div><label for="trim-width">재단 가로 (mm) <span>선택</span></label><input id="trim-width" name="trim-width" type="number" min="1" step="any" inputmode="decimal"></div>
+                <div><label for="trim-height">재단 세로 (mm) <span>선택</span></label><input id="trim-height" name="trim-height" type="number" min="1" step="any" inputmode="decimal"></div>
+                <div><label for="spine-width">책등 두께 (mm) <span>선택</span></label><input id="spine-width" name="spine-width" type="number" min="0.1" step="any" inputmode="decimal"></div>
+              </div>
+              <label for="binding-type">제본 방식</label>
+              <select id="binding-type" name="binding-type" aria-describedby="binding-help">
+                <option value="paperback">무선 제본</option><option value="hardcover">양장</option><option value="saddle-stitch">중철</option><option value="exposed-sewn">노출사철</option>
+              </select>
+            </section>
+            <section class="form-section" aria-labelledby="covers-heading">
+              <h2 id="covers-heading">표지</h2>
+              <div class="file-field"><label for="front">표1 · 앞표지</label><input id="front" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"><p class="help file-state" id="front-state"></p></div>
+              <div class="file-field"><label for="back">표4 · 뒤표지 <span>선택</span></label><input id="back" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"><p class="help file-state" id="back-state"></p><label class="check-label" id="back-remove-row" hidden><input id="back-remove" type="checkbox"> 기존 뒤표지 제거</label></div>
+              <div class="file-field"><label for="spine">책등 <span>선택</span></label><input id="spine" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"><p class="help file-state" id="spine-state"></p><label class="check-label" id="spine-remove-row" hidden><input id="spine-remove" type="checkbox"> 기존 책등 이미지 제거</label><p class="help" id="binding-help"></p></div>
+            </section>
+            <section class="form-section" aria-labelledby="pdf-heading">
+              <h2 id="pdf-heading">내지</h2>
+              <div class="file-field"><label for="interior">PDF 파일</label><input id="interior" type="file" accept="application/pdf,.pdf"><p class="help file-state" id="interior-state"></p></div>
+              <label for="page-layout">PDF 페이지 구성</label>
+              <select id="page-layout" name="page-layout"><option value="single">한 쪽씩</option><option value="spread">두 쪽 펼침면</option></select>
+              <p class="help">펼침면은 왼쪽, 오른쪽 순으로 나눕니다. 내지는 읽기용 이미지로 저장됩니다.</p>
+            </section>
+          </fieldset>
+          <section class="form-section" id="book-previews" aria-labelledby="preview-heading">
+            <h2 id="preview-heading">파일 미리보기</h2>
+            <div class="previews">
+              <figure><div class="preview-stage"><span>앞표지를 선택해주세요.</span><img id="cover-preview" alt="앞표지" hidden></div><figcaption>앞표지<span id="preview-binding"></span></figcaption></figure>
+              <figure><div class="preview-stage"><span>내지 PDF를 선택해주세요.</span><img id="pdf-preview" alt="내지 첫 페이지" hidden></div><figcaption>내지 첫 페이지<span id="preview-page-count"></span></figcaption></figure>
+            </div>
+          </section>
+          <fieldset class="form-section" id="project-specific" aria-labelledby="project-heading">
+            <h2 id="project-heading">프로젝트 이미지</h2>
+            <p class="help" id="gallery-help">프로젝트에서 보여줄 이미지를 순서대로 추가해주세요.</p>
+            <label for="project-images">이미지 추가</label>
+            <input id="project-images" type="file" multiple accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
+            <ol id="project-image-list" class="image-list"></ol>
+          </fieldset>
+        </fieldset>
+        <div class="form-actions">
+          <div class="action-row"><button class="primary" id="publish" type="submit">저장 <span aria-hidden="true">→</span></button><button class="text-button" id="pause" type="button" hidden>일시 정지</button><button class="text-button" id="cancel-upload" type="button" hidden>작업 중단</button></div>
+          <progress id="upload-progress" aria-label="저장 진행률" max="1" value="0" hidden></progress>
+          <p class="status" id="form-status" role="status" aria-live="polite"></p>
+          <p class="error" id="form-error" role="alert"></p>
+          <a class="text-button" id="relogin" href="/admin" hidden>다시 로그인 →</a>
+        </div>
+      </form>
+    </div>
+  </main>
+  <main class="site-settings" id="site-panel" hidden>
+    <header class="section-header heading-row"><h1>사이트 설정</h1><button class="text-button" type="button" id="site-reload">최신 내용 불러오기</button></header>
+    <p class="help draft-notice" id="site-draft-notice" role="status"></p>
+    <form id="site-form">
+      <fieldset id="site-fields" disabled>
+        <section class="form-section" aria-labelledby="site-title-heading">
+          <h2 id="site-title-heading">사이트 이름</h2>
+          <div class="language-fields">
+            <div><label for="site-title">국문 이름</label><input id="site-title" type="text" maxlength="160"></div>
+            <div><label for="site-title-en">영문 이름 <span>선택</span></label><input id="site-title-en" type="text" lang="en" maxlength="160"></div>
+          </div>
+        </section>
+        <section class="form-section" aria-labelledby="site-about-heading">
+          <h2 id="site-about-heading">소개</h2>
+          <div class="language-fields">
+            <div>
+              <input id="about-heading" type="hidden">
+              <label for="about-text">국문 소개</label><textarea id="about-text" rows="7" maxlength="12000"></textarea>
+            </div>
+            <div>
+              <input id="about-heading-en" type="hidden">
+              <label for="about-text-en">영문 소개 <span>선택</span></label><textarea id="about-text-en" rows="7" lang="en" maxlength="12000"></textarea>
+            </div>
+          </div>
+          <label for="about-image">이미지 <span>선택</span></label><input id="about-image" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
+          <p class="help file-state" id="about-image-state"></p>
+          <label class="check-label" id="about-remove-row" hidden><input id="about-remove" type="checkbox"> 기존 이미지 제거</label>
+          <div class="about-preview" id="about-preview-wrap" hidden><img id="about-preview" alt="About 이미지 미리보기"></div>
+        </section>
+        <section class="form-section" aria-labelledby="site-tags-heading">
+          <div class="heading-row"><h2 id="site-tags-heading">프로젝트 태그</h2><button class="text-button" type="button" id="add-project-tag">태그 추가 +</button></div>
+          <ol class="project-tag-list" id="project-tags"></ol>
+          <p class="help">사용 중인 태그는 작업에서 선택을 해제한 뒤 제거할 수 있습니다.</p>
+        </section>
+        <section class="form-section" aria-labelledby="site-contact-heading">
+          <h2 id="site-contact-heading">연락처</h2>
+          <div class="language-fields">
+            <div><label for="contact-text">국문 안내</label><textarea id="contact-text" rows="4" maxlength="6000"></textarea></div>
+            <div><label for="contact-text-en">영문 안내 <span>선택</span></label><textarea id="contact-text-en" lang="en" rows="4" maxlength="6000"></textarea></div>
+          </div>
+          <label for="contact-email">이메일</label><input id="contact-email" type="email" maxlength="254" autocomplete="email">
+          <label for="contact-instagram">인스타그램 계정</label><input id="contact-instagram" type="text" maxlength="200" autocapitalize="off" spellcheck="false" placeholder="계정명 또는 @계정명">
+          <div class="heading-row"><h3>추가 링크</h3><button class="text-button" type="button" id="add-contact-link">링크 추가 +</button></div>
+          <ol class="contact-link-list" id="contact-links"></ol>
+        </section>
+      </fieldset>
+      <div class="form-actions">
+        <button class="primary" type="submit" id="site-save" disabled>저장 →</button>
+        <p class="status" id="site-status" role="status" aria-live="polite"></p>
+        <p class="error" id="site-error" role="alert"></p>
+        <a class="text-button" id="site-relogin" href="/admin#settings" hidden>다시 로그인 →</a>
+      </div>
+    </form>
+  </main>
+</body>
+</html>

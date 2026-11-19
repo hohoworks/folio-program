@@ -1,0 +1,45 @@
+.reader-window {
+  display: contents;
+}
+
+@media (max-width: 680px) {
+  .stage[data-mode="read"] {
+    height: auto;
+  }
+
+  .reading-view {
+    height: auto;
+    padding-block: 28px 30px;
+  }
+
+  .reader-window {
+    display: block;
+    width: min(100%, 520px);
+    min-width: 0;
+    clip-path: inset(-24px 0);
+  }
+
+  .reader-window .page-area {
+    /* One page occupies ten elevenths of the window. */
+    width: calc(2000% / 11);
+    transform: translateX(0);
+    transition: transform 650ms cubic-bezier(.3, .08, .23, 1);
+  }
+
+  .reader-window[data-reader-side="right"] .page-area {
+    transform: translateX(-45%);
+  }
+
+  .reader-window.camera-following .page-area {
+    transform: translateX(var(--camera-offset));
+    transition: none;
+  }
+
+  .reader-window .paper-prose {
+    font-size: max(10px, 3.35cqw);
+  }
+
+  .reader-window.camera-instant .page-area {
+    transition: none;
+  }
+}

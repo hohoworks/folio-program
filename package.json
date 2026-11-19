@@ -1,0 +1,20 @@
+{
+  "name": "folio-github",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "build": "node scripts/build-public.mjs",
+    "build:admin": "node scripts/build-admin.mjs",
+    "dev:admin": "pnpm run build:admin && wrangler dev --ip 127.0.0.1",
+    "dev:admin:local": "pnpm run build:admin && node --env-file-if-exists=.dev.vars scripts/local-admin.mjs",
+    "test": "node --test admin/worker.test.mjs scripts/*.test.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "6.5.438"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

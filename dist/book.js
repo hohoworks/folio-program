@@ -1,0 +1,92 @@
+export const pages = [
+  {
+    eyebrow: 'FIELD NOTES',
+    title: 'The Quiet Hours',
+    subtitle: 'A forest at first light',
+    paragraphs: [
+      'A walk through the evergreens in the hour before the sun reaches the forest floor.',
+    ],
+    layout: 'text',
+  },
+  {
+    eyebrow: 'FIRST LIGHT',
+    title: 'The ridge',
+    paragraphs: [],
+    image: true,
+    imagePosition: '50% 34%',
+    caption: 'Low cloud settles below the treetops.',
+    layout: 'photo',
+  },
+  {
+    eyebrow: 'AT THE TREE LINE',
+    title: 'The path in',
+    paragraphs: [
+      'At the bend, the stones give way to a soft bed of needles. The sound of each step changes before the trees close in.',
+      'A few drops are still falling from the branches. In the spaces between them, water is running below the path.',
+    ],
+    layout: 'text',
+  },
+  {
+    eyebrow: 'UNDER THE CANOPY',
+    title: 'A stand of firs',
+    paragraphs: [],
+    image: true,
+    imagePosition: '26% 58%',
+    caption: 'The nearer trunks show through the mist first.',
+    layout: 'photo',
+  },
+  {
+    eyebrow: 'BEFORE SUNRISE',
+    title: 'A little color',
+    paragraphs: [
+      'Green comes back slowly. It shows first in the moss at the roots, then in the needles where a branch hangs over the path.',
+      'Farther up the slope, the trees still look penciled in.',
+    ],
+    layout: 'text',
+  },
+  {
+    eyebrow: 'ACROSS THE VALLEY',
+    title: 'The far slope',
+    paragraphs: [],
+    image: true,
+    imagePosition: '74% 42%',
+    caption: 'Fog softens the far edge of the stand.',
+    layout: 'photo',
+  },
+  {
+    eyebrow: 'THE CLEARING',
+    title: 'A break in the trees',
+    paragraphs: [
+      'The opening is just wide enough for a wash of pale sky. I stop where the damp grass begins and watch the cloud lift a few feet.',
+      'For a moment I can see across to the other side. Then the gap fills again.',
+    ],
+    layout: 'text',
+  },
+  {
+    eyebrow: 'THE LOWER SLOPE',
+    title: 'Mist among the trunks',
+    paragraphs: [],
+    image: true,
+    imagePosition: '40% 82%',
+    caption: 'Cool air lingers in the hollow.',
+    layout: 'photo',
+  },
+  {
+    eyebrow: 'ON THE WAY BACK',
+    title: 'Daybreak',
+    paragraphs: [
+      'On the return path the stones have begun to shine. The upper branches are in full light, though the air at ground level is still cold.',
+      'At the bend I stop once more. A bird calls from somewhere out of sight, and farther uphill another answers.',
+    ],
+    layout: 'text',
+  },
+  {
+    eyebrow: 'MORNING',
+    title: 'One last look',
+    paragraphs: [],
+    image: true,
+    imagePosition: '61% 25%',
+    caption: 'The tree line comes back into view.',
+    layout: 'photo',
+  },
+];
