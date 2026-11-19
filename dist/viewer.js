@@ -38,7 +38,7 @@ const messages = {
     previous: '← 이전', next: '다음 →', previousPage: '이전 쪽', nextPage: '다음 쪽',
     previousSpread: '이전 펼침면', nextSpread: '다음 펼침면', backCover: '표지로 돌아가기',
     backShelf: '← 책장', backProject: '← 목록으로 돌아가기', viewer: '책 뷰어', coverView: '3D 표지',
-    bookNavigation: '책 탐색', projectNavigation: '작업 탐색', contact: '연락처', email: '이메일',
+    bookNavigation: '책 탐색', projectNavigation: '작업 탐색', contact: '연락처', email: '이메일', instagram: '인스타그램',
     emptyProjects: '아직 공개된 작업이 없습니다.', emptyBooks: '아직 공개된 책이 없습니다.',
     unavailable: '목록을 불러올 수 없습니다. 새로고침해 주세요.',
     emptyContact: '연락처가 아직 등록되지 않았습니다.',
@@ -50,7 +50,7 @@ const messages = {
     previous: '← Previous', next: 'Next →', previousPage: 'Previous page', nextPage: 'Next page',
     previousSpread: 'Previous spread', nextSpread: 'Next spread', backCover: 'Back to cover',
     backShelf: '← Book shelf', backProject: '← Back to projects', viewer: 'Book viewer', coverView: '3D cover',
-    bookNavigation: 'Book navigation', projectNavigation: 'Project navigation', contact: 'Contact', email: 'Email',
+    bookNavigation: 'Book navigation', projectNavigation: 'Project navigation', contact: 'Contact', email: 'Email', instagram: 'Instagram',
     emptyProjects: 'No published projects yet.', emptyBooks: 'No published books yet.',
     unavailable: 'The collection could not be loaded. Please refresh the page.',
     emptyContact: 'Contact details have not been added yet.',
@@ -926,17 +926,24 @@ for (const [id, text] of [['contact-text', site.contact.text], ['contact-en-text
   else note.parentElement.remove();
 }
 contactLayout.hidden = !contactLayout.childElementCount;
+const contactLinks = $('contact-links');
+function addContactLink(text, href, kind) {
+  let parent = contactLinks;
+  if (kind) {
+    parent = appendText(contactLinks, 'div', 'contact-item', '');
+    const label = appendText(parent, 'span', 'contact-label', t(kind));
+    label.dataset.contactLabel = kind;
+  }
+  appendText(parent, 'a', '', text).href = href;
+}
+
 if (site.contact.email) {
-  const item = appendText($('contact-links'), 'div', 'contact-item', '');
-  const label = appendText(item, 'span', 'contact-label', '');
-  label.id = 'contact-email-label';
-  const email = appendText(item, 'a', '', site.contact.email);
-  email.href = 'mailto:' + encodeURIComponent(site.contact.email).replace('%40', '@');
+  addContactLink(site.contact.email, 'mailto:' + encodeURIComponent(site.contact.email).replace('%40', '@'), 'email');
 }
 for (const link of site.contact.links) {
-  appendText($('contact-links'), 'a', '', link.label).href = link.url;
+  addContactLink(link.label, link.url, link.kind);
 }
-const hasContactLinks = $('contact-links').childElementCount > 0;
+const hasContactLinks = contactLinks.childElementCount > 0;
 $('contact-empty').hidden = !contactLayout.hidden || hasContactLinks;
 $('contact-details').hidden = !hasContactLinks && !contactLayout.hidden;
 
@@ -1015,7 +1022,9 @@ function refreshLocale() {
   $('contact-title').lang = locale;
   const firstContactColumn = contactLayout.querySelector('.intro-column[lang="' + locale + '"]');
   if (firstContactColumn) contactLayout.prepend(firstContactColumn);
-  if ($('contact-email-label')) $('contact-email-label').textContent = t('email');
+  for (const label of contactLinks.querySelectorAll('[data-contact-label]')) {
+    label.textContent = t(label.dataset.contactLabel);
+  }
   updateReturnLinks();
   stage.setAttribute('aria-label', t('viewer'));
   for (const navigation of viewer.querySelectorAll('nav')) navigation.setAttribute('aria-label', t('bookNavigation'));

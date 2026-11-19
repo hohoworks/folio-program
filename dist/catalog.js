@@ -104,27 +104,27 @@ function publishedProject(project) {
 }
 
 function contactURL(value) {
-  if (typeof value !== 'string' || /[\u0000-\u0020\u007f]/.test(value)) return '';
+  if (typeof value !== 'string' || /[\u0000-\u0020\u007f]/.test(value)) return null;
   try {
     const url = new URL(value);
-    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url.href : '';
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password ? url : null;
   } catch {
-    return '';
+    return null;
   }
 }
 
 function publicLink(link) {
   const url = contactURL(link?.url);
-  let label = typeof link?.label === 'string' ? link.label.trim() : '';
+  const label = typeof link?.label === 'string' ? link.label.trim() : '';
   if (!url || !label) return null;
-  if (/^(instagram|인스타그램)$/i.test(label)) {
-    const profile = new URL(url);
-    const handle = /^\/([a-z\d_](?:[a-z\d._]{0,28}[a-z\d_])?)\/?$/i.exec(profile.pathname)?.[1];
-    if (handle && !handle.includes('..') && !profile.port && /^(www\.)?instagram\.com$/.test(profile.hostname)) {
-      label = '@' + handle;
+  if (/^(www\.)?instagram\.com$/.test(url.hostname) && !url.port) {
+    const handle = /^\/([a-z\d_](?:[a-z\d._]{0,28}[a-z\d_])?)\/?$/i.exec(url.pathname)?.[1];
+    if (handle && !handle.includes('..') &&
+        (/^(instagram|인스타그램)$/i.test(label) || label.toLowerCase() === '@' + handle.toLowerCase())) {
+      return { kind: 'instagram', label: '@' + handle, url: url.href };
     }
   }
-  return { label, url };
+  return { label, url: url.href };
 }
 
 function siteSettings(site) {
