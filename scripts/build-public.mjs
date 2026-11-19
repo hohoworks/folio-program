@@ -3,10 +3,11 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { catalogAssets, checkSite } from './check-site.mjs';
 import { titleLanguage } from '../dist/title-language.js';
+import { localizedSiteTitles, migrateStarterSite } from '../dist/site-title.js';
 
 const program = [
   'index.html', '404.html', '_headers', 'assets/folio.svg', 'style.css', 'mobile-reader.css', 'web-fonts.js',
-  'viewer.js', 'catalog.js', 'shelf.js', 'project-tags.js', 'title-language.js', 'site-language.js', 'curl.js', 'mobile-reader.js',
+  'viewer.js', 'catalog.js', 'shelf.js', 'project-tags.js', 'title-language.js', 'site-language.js', 'site-title.js', 'curl.js', 'mobile-reader.js',
 ];
 const demoProgram = ['library.js', 'book.js', 'demo-projects.js'];
 const programPaths = new Set([...program, ...demoProgram, ...catalogAssets({ books: [], demo: true })]);
@@ -33,7 +34,7 @@ function publicCatalog(source) {
   const ids = new Set([...books, ...projects].map(item => item.id));
   return {
     demo: source.demo === true && !source.books.length && !source.projects?.length,
-    ...(source.site && { site: visitorFields(source.site) }),
+    ...(source.site && { site: visitorFields(migrateStarterSite(source.site)) }),
     books, projects,
     ...(source.order != null && { order: source.order.filter(id => ids.has(id)) }),
   };
@@ -45,9 +46,7 @@ function escapeHtml(value) {
 }
 
 function renderSiteTitle(html, site) {
-  const ko = typeof site?.title === 'string' && site.title.trim() ? site.title.trim() : 'Folio';
-  const translation = site?.translations?.en?.title;
-  const en = typeof translation === 'string' && translation.trim() ? translation : ko;
+  const { ko, en } = localizedSiteTitles(site);
   const koText = escapeHtml(ko);
   const enText = escapeHtml(en);
   const wordmark = '<a href="#project" class="wordmark">' +

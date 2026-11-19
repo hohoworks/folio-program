@@ -45,7 +45,7 @@ function updateTabTitle() {
 }
 
 function renderSiteName(site) {
-  const name = site.title?.trim() || site.translations?.en?.title?.trim() || 'Folio';
+  const name = site.title?.trim() || site.translations?.en?.title?.trim() || 'HOHO WORKS';
   const mark = $('.wordmark');
   mark.textContent = name;
   mark.title = name;
@@ -139,7 +139,7 @@ function updateView() {
   };
   $('#binding-help').textContent = bindingHelp[$('#binding-type').value] || '책등 이미지가 없으면 제본 방식에 맞춰 책등을 표시합니다.';
   fields.disabled = busy || editorBusy || siteBusy || Boolean(state.commitPayload);
-  publish.disabled = busy || editorBusy || siteBusy || catalogBusy || pendingFiles.size > 0;
+  publish.disabled = !tagsLoaded || busy || editorBusy || siteBusy || catalogBusy || pendingFiles.size > 0;
   publish.textContent = state.commitPayload ? '저장 확인 →' : state.pdf?.pages.length ? '이어서 저장 →' : '저장 →';
   $('#pause').hidden = !busy;
   $('#cancel-upload').hidden = !busy;
@@ -730,7 +730,7 @@ async function saveItem() {
 
 form.addEventListener('submit', event => {
   event.preventDefault();
-  if (!busy && !catalogBusy && pendingFiles.size === 0) saveItem();
+  if (state && !publish.disabled) saveItem();
 });
 
 $('#pause').addEventListener('click', () => activeController?.abort(new Error('일시 정지했습니다. 이어서 저장할 수 있습니다.')));
@@ -825,10 +825,11 @@ $('#new-item').addEventListener('click', async () => {
 });
 
 async function refreshCatalogue() {
-  if (catalogBusy) return;
+  if (catalogBusy) return false;
   const committedAtStart = lastCommittedSite;
   const message = $('#catalogue-status');
   catalogBusy = true;
+  siteEditor?.setLoadState(true);
   updateView();
   try {
     const data = await request('/api/catalog', {
@@ -851,9 +852,14 @@ async function refreshCatalogue() {
     renderWorkTags();
     renderFilterOptions();
     message.textContent = catalog.length ? '' : '등록된 작업이 없습니다.';
+    $('#relogin').hidden = true;
+    siteEditor?.setLoadState(false);
+    return true;
   } catch (cause) {
+    siteEditor?.setLoadState(false, cause);
     message.textContent = errorMessage(cause);
     $('#relogin').hidden = cause.status !== 401;
+    return false;
   } finally {
     catalogBusy = false;
     updateView();
@@ -968,11 +974,24 @@ $('#catalog-search').addEventListener('input', renderCatalogue);
 $('#catalog-kind').addEventListener('change', renderCatalogue);
 $('#catalog-tag').addEventListener('change', renderCatalogue);
 $('#catalog-year').addEventListener('change', renderCatalogue);
+async function persistEditors() {
+  readMetadata();
+  await Promise.all([persist(), siteEditor?.persist()]);
+}
+
+for (const link of document.querySelectorAll('#relogin, #site-relogin, #site-load-login')) {
+  link.addEventListener('click', async event => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    await persistEditors();
+    history.replaceState(null, '', link.href);
+    window.location.reload();
+  });
+}
+
 $('#logout').addEventListener('click', async () => {
   if (busy || siteBusy || editorBusy) return;
-  readMetadata();
-  await persist();
-  await siteEditor?.persist();
+  await persistEditors();
   try {
     await request('/api/logout', { method: 'POST' });
     window.location.reload();
@@ -1015,8 +1034,8 @@ async function initialize() {
     notice.textContent = '임시 작업을 불러왔습니다.' + (completed ? ' 저장된 ' + completed + '개 이미지부터 이어갈 수 있습니다.' : '');
     if (state.commitPayload) status.textContent = '이전 저장 결과를 확인해주세요. 저장 확인을 누르면 같은 요청을 이어갑니다.';
   }
+  await switchSection(location.hash === '#settings' ? 'site' : 'work');
   await Promise.all([updateBookPreviews(), refreshCatalogue()]);
-  switchSection(location.hash === '#settings' ? 'site' : 'work');
 }
 
 async function switchSection(section) {

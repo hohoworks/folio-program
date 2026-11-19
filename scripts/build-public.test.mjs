@@ -74,7 +74,7 @@ test('an explicit empty demo includes all sample assets; a failed build preserve
   const f = await fixture(t);
   await f.save({ books: [], demo: true });
   await buildPublic(f.root);
-  assert.ok((await readFile(join(f.output, 'index.html'), 'utf8')).includes('<title data-en="Folio">Folio</title>'));
+  assert.ok((await readFile(join(f.output, 'index.html'), 'utf8')).includes('<title data-en="HOHO WORKS">HOHO WORKS</title>'));
   await readFile(join(f.output, 'library.js'));
   await readFile(join(f.output, 'assets/forest-cover.webp'));
   await readFile(join(f.output, 'assets/examples/thumbs/afterimage.webp'));
@@ -88,6 +88,26 @@ test('an explicit empty demo includes all sample assets; a failed build preserve
   assert.equal((await f.read()).projects[0].id, 'new');
   await f.save({ books: [], projects: [{ ...project, published: 'false' }] });
   await assert.rejects(buildPublic(f.root), /공개 설정/);
+});
+
+test('the shipped site title migrates before publishing, while subsequent choices and translations survive', async t => {
+  const f = await fixture(t);
+  const starterRevision = 'e1edee23-0932-4b9a-8c67-9c803a4b2e93';
+  for (const [title, revision, expected] of [
+    ['HOHOHO', starterRevision, 'HOHO WORKS'],
+    ['HOHOHO', 'new-revision', 'HOHOHO'],
+    ['Folio', starterRevision, 'Folio'],
+  ]) {
+    const site = { title, revision, translations: { en: { title: 'English name' } } };
+    await f.save({ books: [], site });
+    await buildPublic(f.root);
+    const published = await f.read();
+    assert.deepEqual(published.site, { title: expected, translations: site.translations });
+    const html = await readFile(join(f.output, 'index.html'), 'utf8');
+    assert.ok(html.includes(`<title data-en="English name">${expected}</title>`));
+    assert.ok(html.includes(`<span data-wordmark-locale="ko" lang="en">${expected}</span>`));
+    assert.deepEqual(JSON.parse(await readFile(join(f.source, 'catalog.json'), 'utf8')).site, site);
+  }
 });
 
 test('separate checkouts publish current private-repository data and program-repository code', async t => {

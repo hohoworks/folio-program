@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import worker from './worker.mjs';
 import { STOCK_PROJECT_TAGS } from '../dist/project-tags.js';
+import { DEFAULT_SITE_TITLE } from '../dist/site-title.js';
 
 const origin = 'https://admin.folio.example';
 const code = crypto.randomUUID() + crypto.randomUUID();
@@ -44,7 +45,9 @@ function mockGitHub(t, handler) {
     const url = new URL(address);
     assert.equal(url.origin, 'https://api.github.com');
     assert.equal(options.headers.Authorization, 'Bearer mock-token');
-    assert.equal(options.redirect, 'error');
+    assert.equal(options.redirect, 'manual');
+    assert.equal(options.headers['User-Agent'], 'HOHO-WORKS-Admin');
+    assert.equal(options.headers['X-GitHub-Api-Version'], '2026-03-10');
     const call = {
       path: url.pathname.replace('/repos/my-studio/folio-books', ''),
       ref: url.searchParams.get('ref'),
@@ -601,7 +604,7 @@ test('site settings preserve blank defaults, validate contact URLs, replay revis
   const cookie = await session();
   const initial = await (await request('/api/catalog', { cookie })).json();
   assert.deepEqual(initial.site, {
-    title: '', about: { heading: '', text: '' }, contact: { text: '', email: '', links: [] }, revision: null,
+    title: DEFAULT_SITE_TITLE, about: { heading: '', text: '' }, contact: { text: '', email: '', links: [] }, revision: null,
     projectTags: STOCK_PROJECT_TAGS,
   });
   const registrationId = crypto.randomUUID();
@@ -1075,4 +1078,107 @@ test('thumbnail references count toward the total image limit', async t => {
   } });
   assert.equal(response.status, 400);
   assert.equal(state.trees.length, 0);
+});
+
+test('GitHub environment values normalize surrounding whitespace and keep the fixed API origin', async t => {
+  const cookie = await session();
+  const calls = mockGitHub(t, ({ path, ref }) => {
+    assert.equal(path, '/contents/dist/catalog.json');
+    assert.equal(ref, 'folio/live');
+    return Response.json({ books: [] });
+  });
+  const response = await request('/api/catalog', { cookie }, {
+    ...env, FOLIO_STORAGE_MODE: ' single ', FOLIO_CONTENT_REPOSITORY: ' \n ', FOLIO_CONTENT_BRANCH: '',
+    GITHUB_REPOSITORY: ' my-studio/folio-books ', GITHUB_BRANCH: ' folio/live ', GITHUB_TOKEN: '\nmock-token\r\n',
+  });
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 1);
+});
+
+test('invalid GitHub token header values fail before outgoing requests and never echo the value', async t => {
+  const cookie = await session();
+  let outgoing = 0;
+  t.mock.method(globalThis, 'fetch', async () => { outgoing++; return Response.json({ books: [] }); });
+  for (const token of [undefined, '', 'header-canary\nsecond-line', 'header-canary with-space', '한글-header-canary', 123]) {
+    const response = await request('/api/catalog', { cookie }, { ...env, GITHUB_TOKEN: token });
+    assert.equal(response.status, 503);
+    const body = await response.json();
+    assert.equal(body.code, 'GITHUB_CONFIG');
+    assert.equal(JSON.stringify(body).includes('header-canary'), false);
+  }
+  assert.equal(outgoing, 0);
+});
+
+test('GitHub redirects are never followed or parsed and cannot leak the token to another origin', async t => {
+  const cookie = await session();
+  let calls = 0;
+  for (const status of [301, 302, 303, 304, 307, 308]) {
+    const response = new Response(null, { status, headers: { Location: 'https://outside.invalid/secret-canary' } });
+    t.mock.method(response, 'clone', () => { assert.fail('Redirect body must not be parsed'); });
+    t.mock.method(globalThis, 'fetch', async (address, options) => {
+      assert.equal(new URL(address).origin, 'https://api.github.com');
+      assert.equal(options.redirect, 'manual');
+      assert.equal(options.headers['User-Agent'], 'HOHO-WORKS-Admin');
+      calls++;
+      return response;
+    });
+    const result = await request('/api/catalog', { cookie });
+    assert.equal(result.status, 502);
+    const body = await result.json();
+    assert.equal(body.code, 'GITHUB_REDIRECT');
+    assert.equal(JSON.stringify(body).includes('outside.invalid'), false);
+    assert.equal(JSON.stringify(body).includes('mock-token'), false);
+  }
+  assert.equal(calls, 6);
+});
+
+test('GitHub failures distinguish credentials, permissions, missing resources, API versions and transport errors', async t => {
+  const cookie = await session();
+  for (const scenario of [
+    { status: 401, message: 'Bad credentials mock-token', code: 'GITHUB_AUTH' },
+    { status: 403, message: 'Resource not accessible by personal access token', code: 'GITHUB_PERMISSION' },
+    { status: 403, message: 'A valid User-Agent header is required', code: 'GITHUB_HEADERS' },
+    { status: 404, message: 'Not Found', code: 'GITHUB_NOT_FOUND' },
+    { status: 400, message: 'Unsupported API version', code: 'GITHUB_VERSION' },
+    { status: 410, message: 'API version is retired', code: 'GITHUB_VERSION' },
+  ]) {
+    t.mock.method(globalThis, 'fetch', async () => Response.json({ message: scenario.message }, { status: scenario.status }));
+    const response = await request('/api/catalog', { cookie });
+    assert.equal(response.status, 502);
+    const body = await response.json();
+    assert.equal(body.code, scenario.code);
+    assert.equal(JSON.stringify(body).includes('mock-token'), false);
+  }
+  t.mock.method(globalThis, 'fetch', async () => { throw new TypeError('secret network mock-token'); });
+  const response = await request('/api/catalog', { cookie });
+  assert.equal(response.status, 502);
+  const body = await response.json();
+  assert.equal(body.code, 'GITHUB_CONNECTION');
+  assert.equal(JSON.stringify(body).includes('mock-token'), false);
+});
+
+test('starter site title migration is read-only and preserves revision checks and later explicit names', async t => {
+  const initialRevision = 'e1edee23-0932-4b9a-8c67-9c803a4b2e93';
+  const state = repository(t, { books: [], site: { title: 'HOHOHO', revision: initialRevision, lastMutationId: 'original-mutation' } });
+  const cookie = await session();
+  const read = await request('/api/catalog', { cookie });
+  const site = (await read.json()).site;
+  assert.equal(site.title, DEFAULT_SITE_TITLE);
+  assert.equal(site.revision, initialRevision);
+  assert.equal(site.lastMutationId, 'original-mutation');
+  assert.equal(state.catalog.site.title, 'HOHOHO');
+  assert.equal(state.commitCount, 0);
+  const changed = await request('/api/site', { method: 'POST', cookie, body: {
+    baseRevision: initialRevision, contact: { text: '연락처 안내' },
+  } });
+  assert.equal(changed.status, 200);
+  const updated = (await changed.json()).site;
+  assert.equal(updated.title, DEFAULT_SITE_TITLE);
+  assert.equal(state.catalog.site.title, DEFAULT_SITE_TITLE);
+  const explicit = await request('/api/site', { method: 'POST', cookie, body: {
+    baseRevision: updated.revision, title: 'HOHOHO',
+  } });
+  assert.equal(explicit.status, 200);
+  const reread = await request('/api/catalog', { cookie });
+  assert.equal((await reread.json()).site.title, 'HOHOHO');
 });

@@ -3,6 +3,7 @@ import { createCurl } from './curl.js';
 import { createMobileReader } from './mobile-reader.js';
 import { createShelf } from './shelf.js';
 import { titleLanguage, alignDetailTitle } from './title-language.js';
+import { DEFAULT_SITE_TITLE, localizedSiteTitles } from './site-title.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
@@ -509,7 +510,7 @@ function addCoverArt(cover, book, imageSrc = book.coverImages?.front) {
     appendText(title, index ? 'i' : 'span', '', line);
   });
   appendText(cover, 'span', 'cover-sub', book.coverLabel);
-  appendText(cover, 'span', 'cover-bottom', 'FOLIO EDITIONS');
+  appendText(cover, 'span', 'cover-bottom', DEFAULT_SITE_TITLE);
 }
 
 function stopCoverArrival() {
@@ -540,10 +541,7 @@ const wordmark = document.querySelector('.wordmark');
 const siteTitles = unavailable ? {
   ko: wordmark.querySelector('[data-wordmark-locale="ko"]')?.textContent || '포트폴리오',
   en: wordmark.querySelector('[data-wordmark-locale="en"]')?.textContent || 'Portfolio',
-} : {
-  ko: site.title,
-  en: translated(site.translations.en.title, site.title),
-};
+} : localizedSiteTitles(site);
 const projectMenu = $('project-menu');
 const projectCards = new Map();
 if (new URL(location.href).searchParams.has('sort')) {
@@ -1102,7 +1100,7 @@ function showBook(book, moveFocus) {
     appendText(back, 'span', 'back-title', book.title).lang = titleLanguage(book.title);
     if (!book.coverImages) {
       appendText(back, 'span', 'back-copy', book.coverCopy);
-      appendText(back, 'span', 'cover-bottom', 'FOLIO EDITIONS');
+      appendText(back, 'span', 'cover-bottom', DEFAULT_SITE_TITLE);
     }
   }
   if (book.coverImages?.spine) {

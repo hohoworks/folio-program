@@ -1,4 +1,5 @@
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
+import { localizedSiteTitles } from './site-title.js';
 
 const positive = value => Number.isFinite(value) && value > 0;
 const assetPath = /^(?:\.\/)?assets\/(books|projects|site)\/(?:[\w-]+\/)+[\w.-]+\.(?:png|jpe?g|webp)$/i;
@@ -138,7 +139,7 @@ function siteSettings(site) {
     if (ko || en) tags.set(tag.id, { id: tag.id, ko: ko || en, en: en || ko });
   }
   return {
-    title: text(site?.title).trim() || 'Folio',
+    title: localizedSiteTitles(site).ko,
     projectTags: [...tags.values()],
     about: {
       heading: text(site?.about?.heading).trim() || 'About',

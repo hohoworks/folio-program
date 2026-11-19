@@ -1,4 +1,5 @@
 import { STOCK_PROJECT_TAGS, idsFor } from '../dist/project-tags.js';
+import { DEFAULT_SITE_TITLE, migrateStarterSite } from '../dist/site-title.js';
 
 const sessionCookie = '__Host-folio-admin';
 const sessionDuration = 4 * 60 * 60;
@@ -215,16 +216,22 @@ async function staticAsset(url, request, env, path) {
 }
 
 function gitConfiguration(env) {
-  const mode = env.FOLIO_STORAGE_MODE ?? (env.FOLIO_CONTENT_REPOSITORY || env.FOLIO_CONTENT_BRANCH ? 'private' : 'single');
+  const setting = value => typeof value === 'string' ? value.trim() : value;
+  const contentRepository = setting(env.FOLIO_CONTENT_REPOSITORY);
+  const contentBranch = setting(env.FOLIO_CONTENT_BRANCH);
+  const mode = setting(env.FOLIO_STORAGE_MODE) || (contentRepository || contentBranch ? 'private' : 'single');
   if (!['private', 'single'].includes(mode)) throw new RequestError(503, '관리자의 저장 방식을 확인해주세요.');
-  const repository = env.FOLIO_CONTENT_REPOSITORY ?? (mode === 'single' ? env.GITHUB_REPOSITORY : undefined);
-  const token = env.GITHUB_TOKEN;
-  const branch = env.FOLIO_CONTENT_BRANCH || (mode === 'single' && env.GITHUB_BRANCH) || 'main';
+  const repository = contentRepository || (mode === 'single' ? setting(env.GITHUB_REPOSITORY) : undefined);
+  const token = setting(env.GITHUB_TOKEN);
+  const branch = contentBranch || (mode === 'single' && setting(env.GITHUB_BRANCH)) || 'main';
   if (mode === 'private' && !repository) throw new RequestError(503, '별도의 비공개 작품 저장소를 지정해주세요.');
+  if (typeof token !== 'string' || !token || /[^\x21-\x7E]/.test(token)) {
+    throw new RequestError(503, 'GitHub 저장 권한 키를 확인해주세요. FOLIO_GITHUB_TOKEN에는 키 한 줄만 넣고 관리자 배포를 다시 실행해주세요.', undefined, 'GITHUB_CONFIG');
+  }
   if (typeof repository !== 'string' || !/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) ||
       ['.', '..'].includes(repository.split('/')[1]) ||
-      typeof token !== 'string' || !token.length ||
-      typeof branch !== 'string' || !branch.split('/').every(part => part && part !== '.' && part !== '..')) {
+      typeof branch !== 'string' || /[\x00-\x20\x7F]/.test(branch) ||
+      !branch.split('/').every(part => part && part !== '.' && part !== '..')) {
     throw new RequestError(503, '관리자 서버에 GitHub 저장소와 쓰기 권한이 설정되어야 합니다.');
   }
   const ref = 'heads/' + branch.split('/').map(encodeURIComponent).join('/');
@@ -237,19 +244,22 @@ async function github(git, path, { method = 'GET', body, accept = 'application/v
   try {
     response = await fetch('https://api.github.com/repos/' + git.repository + path, {
       method,
-      redirect: 'error',
+      redirect: 'manual',
       cache: 'no-store',
       headers: {
         'Accept': accept,
         'Authorization': 'Bearer ' + git.token,
-        'User-Agent': 'Folio-Admin',
+        'User-Agent': 'HOHO-WORKS-Admin',
         'X-GitHub-Api-Version': githubVersion,
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: requestBody,
     });
   } catch {
-    throw new RequestError(502, 'GitHub에 연결할 수 없습니다. 다시 시도해주세요.');
+    throw new RequestError(502, 'GitHub 요청을 전송하지 못했습니다. 최신 관리자 프로그램을 다시 배포한 뒤 다시 시도해주세요.', undefined, 'GITHUB_CONNECTION');
+  }
+  if (response.redirected || (response.status >= 300 && response.status < 400)) {
+    throw new RequestError(502, 'GitHub 저장소 주소가 변경되었습니다. 저장소 이름과 이동 여부를 확인하고 관리자 배포를 다시 실행해주세요.', undefined, 'GITHUB_REDIRECT');
   }
   if (response.ok || allowed.includes(response.status)) return response;
   const errorBody = await response.clone().json().catch(() => ({}));
@@ -263,8 +273,20 @@ async function github(git, path, { method = 'GET', body, accept = 'application/v
     const retryAfter = Math.max(1, Math.ceil(Number.isFinite(retrySeconds) ? retrySeconds : resetSeconds > 0 ? resetSeconds : 60));
     throw new RequestError(429, 'GitHub 요청 한도에 도달했습니다. 잠시 후 다시 시도해주세요.', retryAfter);
   }
-  if ([401, 403, 404].includes(response.status)) {
-    throw new RequestError(502, 'GitHub 저장소, 연결된 브랜치와 토큰 권한을 확인해주세요.');
+  if (response.status === 401) {
+    throw new RequestError(502, 'GitHub 저장 권한 키가 만료되었거나 유효하지 않습니다. FOLIO_GITHUB_TOKEN을 교체하고 관리자 배포를 다시 실행해주세요.', undefined, 'GITHUB_AUTH');
+  }
+  if (response.status === 403) {
+    if (/user[\s-]?agent/i.test(errorBody.message || '')) {
+      throw new RequestError(502, 'GitHub 요청 헤더 설정을 확인해주세요. 최신 관리자 프로그램을 다시 배포해주세요.', undefined, 'GITHUB_HEADERS');
+    }
+    throw new RequestError(502, 'GitHub 토큰의 작품 저장소 선택과 Contents 읽기·쓰기 권한, 조직 승인 여부를 확인해주세요.', undefined, 'GITHUB_PERMISSION');
+  }
+  if (response.status === 404) {
+    throw new RequestError(502, 'GitHub 작품 저장소와 연결된 브랜치 이름, 토큰의 해당 저장소 접근 권한을 확인해주세요.', undefined, 'GITHUB_NOT_FOUND');
+  }
+  if ([400, 410].includes(response.status) && /api.?version/i.test(errorBody.message || '')) {
+    throw new RequestError(502, 'GitHub API 버전 설정을 확인해주세요. 최신 관리자 프로그램을 다시 배포해주세요.', undefined, 'GITHUB_VERSION');
   }
   throw new RequestError(502, 'GitHub에 저장하지 못했습니다. 다시 시도해주세요.');
 }
@@ -291,11 +313,11 @@ function isRecord(value) {
 }
 
 function siteDefaults(value) {
-  const site = isRecord(value) ? { ...value } : {};
+  const site = isRecord(value) ? { ...migrateStarterSite(value) } : {};
   delete site.projectSort;
   return {
     ...site,
-    title: typeof site.title === 'string' ? site.title : '',
+    title: typeof site.title === 'string' && site.title.trim() ? site.title : DEFAULT_SITE_TITLE,
     about: { heading: '', text: '', ...(isRecord(site.about) ? site.about : {}) },
     contact: { text: '', email: '', links: [], ...(isRecord(site.contact) ? site.contact : {}) },
     projectTags: site.projectTags === undefined ? STOCK_PROJECT_TAGS.map(tag => ({ ...tag })) : site.projectTags,

@@ -37,6 +37,7 @@ export async function createSiteEditor({ onSaved, onCommitted, onBusy }) {
   let savedSite;
   let busy = false;
   let pendingFile = false;
+  let loading = true;
   let persistence = Promise.resolve();
   let dirty = Boolean(draft);
   let generation = 0;
@@ -92,7 +93,7 @@ export async function createSiteEditor({ onSaved, onCommitted, onBusy }) {
     fields.disabled = disabled || Boolean(draft?.commitPayload);
     save.disabled = disabled;
     save.textContent = draft?.commitPayload ? '저장 확인 →' : '저장 →';
-    $('#site-reload').disabled = disabled;
+    $('#site-reload').disabled = busy || pendingFile || loading;
     onBusy(busy || pendingFile);
   }
 
@@ -301,23 +302,33 @@ export async function createSiteEditor({ onSaved, onCommitted, onBusy }) {
   });
 
   $('#site-reload').addEventListener('click', async () => {
-    if (!savedSite || busy || pendingFile) return;
-    if (dirty && !window.confirm('현재 설정의 임시 수정을 비우고 최신 내용을 불러올까요?')) return;
-    await onSaved();
-    await persistence.catch(() => {});
-    await clearDraft('site');
-    source = null;
-    dirty = false;
-    draft = fresh(savedSite);
-    notice.textContent = '';
-    error.textContent = '';
-    message.textContent = '최신 설정을 불러왔습니다.';
-    write();
+    if (busy || pendingFile || loading) return;
+    const replacing = Boolean(savedSite);
+    if (replacing && dirty && !window.confirm('현재 설정의 임시 수정을 비우고 최신 내용을 불러올까요?')) return;
+    busy = true;
+    update();
+    try {
+      const loaded = await onSaved();
+      if (!loaded || !replacing) return;
+      await persistence.catch(() => {});
+      await clearDraft('site');
+      source = null;
+      dirty = false;
+      draft = fresh(savedSite);
+      notice.textContent = '';
+      error.textContent = '';
+      $('#site-relogin').hidden = true;
+      message.textContent = '최신 설정을 불러왔습니다.';
+      write();
+    } finally {
+      busy = false;
+      update();
+    }
   });
 
   $('#site-form').addEventListener('submit', async event => {
     event.preventDefault();
-    if (!draft || busy || pendingFile) return;
+    if (!draft || !savedSite || busy || pendingFile) return;
     error.textContent = '';
     $('#site-relogin').hidden = true;
     if (!draft.commitPayload) {
@@ -431,6 +442,16 @@ export async function createSiteEditor({ onSaved, onCommitted, onBusy }) {
   }
 
   return {
+    setLoadState(pending, cause) {
+      loading = pending;
+      const line = $('#site-load-status');
+      line.textContent = cause ? '사이트 설정을 불러오지 못했습니다. ' + errorMessage(cause)
+        : pending ? '사이트 설정을 불러오는 중입니다.' : '';
+      line.classList.toggle('error', Boolean(cause));
+      $('#site-load-login').hidden = cause?.status !== 401;
+      $('#site-reload').textContent = cause ? '다시 불러오기' : '최신 내용 불러오기';
+      update();
+    },
     setSite(site, works = []) {
       savedSite = site;
       const savedTags = Array.isArray(site.projectTags) ? site.projectTags : STOCK_PROJECT_TAGS;
