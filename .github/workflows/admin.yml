@@ -1,0 +1,91 @@
+name: Publish FOLIO admin
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: folio-admin
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm run build:admin
+      - name: Check administrator deployment settings
+        env:
+          ADMIN_CODE: ${{ secrets.FOLIO_ADMIN_CODE }}
+          GITHUB_TOKEN: ${{ secrets.FOLIO_GITHUB_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        shell: bash
+        run: |
+          if ! [[ "$ADMIN_CODE" =~ ^[A-Za-z0-9_-]{43,128}$ && -n "$GITHUB_TOKEN" && -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo '::error::Check FOLIO_ADMIN_CODE, FOLIO_GITHUB_TOKEN, CLOUDFLARE_API_TOKEN, and CLOUDFLARE_ACCOUNT_ID in Actions secrets.'
+            exit 1
+          fi
+      - name: Check the storage repository
+        id: storage
+        shell: bash
+        env:
+          FOLIO_CONTENT_REPOSITORY: ${{ vars.FOLIO_CONTENT_REPOSITORY }}
+          FOLIO_CONTENT_BRANCH: ${{ vars.FOLIO_CONTENT_BRANCH }}
+          GH_TOKEN: ${{ secrets.FOLIO_GITHUB_TOKEN }}
+        run: |
+          if [[ ! -f .folio-split-program && -z "$FOLIO_CONTENT_REPOSITORY$FOLIO_CONTENT_BRANCH" ]]; then
+            echo 'mode=single' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          target="$FOLIO_CONTENT_REPOSITORY"
+          shopt -s nocasematch
+          if [[ ! "$target" =~ ^[a-zA-Z0-9-]+/[a-zA-Z0-9_.-]+$ || "$target" == "$GITHUB_REPOSITORY" || "${target#*/}" == "." || "${target#*/}" == ".." ]]; then
+            echo '::error::FOLIO_CONTENT_REPOSITORY에 별도 비공개 작품 저장소의 소유자/이름을 입력해주세요.'
+            exit 1
+          fi
+          name=$(gh api "repos/$target" --jq 'select(.private == true and .visibility == "private") | .full_name')
+          if [[ "$name" != "$target" ]]; then
+            echo '::error::작품 저장소의 이름과 비공개(Private) 상태를 확인해주세요.'
+            exit 1
+          fi
+          branch=$(jq -nr --arg name "${FOLIO_CONTENT_BRANCH:-main}" '$name | @uri')
+          head=$(gh api "repos/$target/branches/$branch" --jq '.commit.sha')
+          gh api "repos/$target/contents/dist/catalog.json?ref=$head" --header 'Accept: application/vnd.github.raw+json' |
+            jq -e 'type == "object" and (.books | type == "array") and
+              ((has("projects") | not) or (.projects | type == "array")) and
+              ([.books[], .projects[]?] |
+                all(type == "object" and (.id | type == "string") and (.title | type == "string")) and
+                (map(.id) | length == (unique | length)))' > /dev/null
+          echo 'mode=private' >> "$GITHUB_OUTPUT"
+      - name: Deploy administrator
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          packageManager: pnpm
+          vars: |
+            FOLIO_STORAGE_MODE
+            FOLIO_CONTENT_REPOSITORY
+            FOLIO_CONTENT_BRANCH
+          secrets: |
+            ADMIN_CODE
+            GITHUB_TOKEN
+        env:
+          ADMIN_CODE: ${{ secrets.FOLIO_ADMIN_CODE }}
+          GITHUB_TOKEN: ${{ secrets.FOLIO_GITHUB_TOKEN }}
+          FOLIO_STORAGE_MODE: ${{ steps.storage.outputs.mode }}
+          FOLIO_CONTENT_REPOSITORY: ${{ vars.FOLIO_CONTENT_REPOSITORY || github.repository }}
+          FOLIO_CONTENT_BRANCH: ${{ steps.storage.outputs.mode == 'private' && (vars.FOLIO_CONTENT_BRANCH || 'main') || github.event.repository.default_branch }}
