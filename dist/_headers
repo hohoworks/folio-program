@@ -5,6 +5,9 @@
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=()
 
+/
+  Link: <https://use.typekit.net/gwz2aiq.js>; rel=preload; as=script; crossorigin=anonymous; fetchpriority=high
+
 /catalog.json
   Cache-Control: no-cache, max-age=0, must-revalidate
 
