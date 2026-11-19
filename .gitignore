@@ -1,0 +1,16 @@
+.DS_Store
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+FOLIO 관리자 접속 코드.txt
+.env
+.env.*
+public-site/
+.folio-build-*/
+admin/public/vendor/
+admin/public/project-tags.js
+
+/dist/assets/books/
+/dist/assets/projects/
+/dist/assets/site/
