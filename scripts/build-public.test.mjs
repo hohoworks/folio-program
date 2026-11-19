@@ -5,6 +5,12 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { buildPublic } from './build-public.mjs';
 
+function assertStaticWordmark(html, expectedText) {
+  // Check what the header contains even when scripts and styles have not loaded.
+  const anchors = [...html.matchAll(/<a\b[^>]*\bclass="wordmark"[^>]*>([\s\S]*?)<\/a>/g)];
+  assert.deepEqual(anchors.map(anchor => anchor[1]), [expectedText]);
+}
+
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'folio-public-test-'));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -49,7 +55,7 @@ test('only public records and referenced images reach Pages, including after unp
   await buildPublic(f.root);
   const home = await readFile(join(f.output, 'index.html'), 'utf8');
   assert.ok(home.includes('<title data-en="포트폴리오">포트폴리오</title>'));
-  assert.ok(home.includes('<span data-wordmark-locale="en" lang="ko">포트폴리오</span>'));
+  assertStaticWordmark(home, '포트폴리오');
   const published = await f.read();
   assert.equal(published.demo, false);
   assert.deepEqual(published.order, [id]);
@@ -74,7 +80,9 @@ test('an explicit empty demo includes all sample assets; a failed build preserve
   const f = await fixture(t);
   await f.save({ books: [], demo: true });
   await buildPublic(f.root);
-  assert.ok((await readFile(join(f.output, 'index.html'), 'utf8')).includes('<title data-en="HOHO WORKS">HOHO WORKS</title>'));
+  const home = await readFile(join(f.output, 'index.html'), 'utf8');
+  assert.ok(home.includes('<title data-en="HOHO WORKS">HOHO WORKS</title>'));
+  assertStaticWordmark(home, 'HOHO WORKS');
   await readFile(join(f.output, 'library.js'));
   await readFile(join(f.output, 'assets/forest-cover.webp'));
   await readFile(join(f.output, 'assets/examples/thumbs/afterimage.webp'));
@@ -105,9 +113,47 @@ test('the shipped site title migrates before publishing, while subsequent choice
     assert.deepEqual(published.site, { title: expected, translations: site.translations });
     const html = await readFile(join(f.output, 'index.html'), 'utf8');
     assert.ok(html.includes(`<title data-en="English name">${expected}</title>`));
-    assert.ok(html.includes(`<span data-wordmark-locale="ko" lang="en">${expected}</span>`));
+    assertStaticWordmark(html, expected);
     assert.deepEqual(JSON.parse(await readFile(join(f.source, 'catalog.json'), 'utf8')).site, site);
   }
+});
+
+test('HTML and the full module graph use one version that changes with code, independently of catalog edits', async t => {
+  const f = await fixture(t);
+  await f.save({ books: [], demo: true });
+  const modulePath = join(f.source, 'book.js');
+  const bookModule = await readFile(modulePath, 'utf8');
+  // A URL for a document in site content must still point to its original location.
+  await f.write('book.js', bookModule + "\nexport const guide = './assets/books/sample/guide.pdf';\n");
+
+  async function buildAndCheckReferences() {
+    await buildPublic(f.root);
+    const readOutput = name => readFile(join(f.output, name), 'utf8');
+    const home = await readOutput('index.html');
+    const version = home.match(/\.\/viewer\.js\?v=([a-f0-9]{16})"/)?.[1];
+    assert.ok(version, 'the entry module must have a version');
+    const scripts = (await readdir(f.output)).filter(name => name.endsWith('.js'));
+    const localCodeUrls = source => [...source.matchAll(/(["'])(\.?\/[^"'<>\s]*?\.(?:js|css)(?:\?[^"'<>\s]*)?)\1/g)].map(match => match[2]);
+    for (const name of ['index.html', '404.html', ...scripts]) {
+      const original = await readFile(join(f.source, name), 'utf8');
+      const generated = await readOutput(name);
+      assert.deepEqual(localCodeUrls(generated), localCodeUrls(original).map(url => url + '?v=' + version), name);
+    }
+    assert.ok(home.includes('"https://use.typekit.net/gwz2aiq.js"'));
+    assert.ok(home.includes('"./assets/folio.svg"'));
+    assert.ok((await readOutput('catalog.js')).includes("'./catalog.json'"));
+    assert.ok((await readOutput('library.js')).includes("'./assets/forest.jpg'"));
+    assert.ok((await readOutput('book.js')).includes("'./assets/books/sample/guide.pdf'"));
+    return version;
+  }
+
+  const first = await buildAndCheckReferences();
+  await f.save({ books: [], demo: true, site: { title: 'Another name' } });
+  assert.equal(await buildAndCheckReferences(), first);
+  // book.js is imported by a dynamically imported demo module, not the home page.
+  const current = await readFile(modulePath, 'utf8');
+  await f.write('book.js', current + '\nexport const changed = true;\n');
+  assert.notEqual(await buildAndCheckReferences(), first);
 });
 
 test('separate checkouts publish current private-repository data and program-repository code', async t => {
@@ -135,8 +181,7 @@ test('separate checkouts publish current private-repository data and program-rep
   assert.equal(await readOutput(image), 'published artwork');
   const home = await readOutput('index.html');
   assert.ok(home.includes('<title data-en="Studio &quot;A&quot; / $&amp;">작업 &amp; &lt;책&gt;</title>'));
-  assert.ok(home.includes('<span data-wordmark-locale="ko" lang="ko">작업 &amp; &lt;책&gt;</span>'));
-  assert.ok(home.includes('<span data-wordmark-locale="en" lang="en">Studio &quot;A&quot; / $&amp;</span>'));
+  assertStaticWordmark(home, '작업 &amp; &lt;책&gt;');
   assert.deepEqual(JSON.parse(await readOutput('catalog.json')).projects.map(item => item.id), ['live']);
   await assert.rejects(readOutput(draft), { code: 'ENOENT' });
   await rm(join(contentDir, image));

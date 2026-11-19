@@ -538,9 +538,11 @@ function animateCoverArrival(source) {
 
 const { books, entries, site, unavailable } = await loadCatalog();
 const wordmark = document.querySelector('.wordmark');
+const publishedTitle = wordmark.dataset.ko || wordmark.querySelector('[data-wordmark-locale="ko"]')?.textContent
+  || wordmark.textContent || DEFAULT_SITE_TITLE;
 const siteTitles = unavailable ? {
-  ko: wordmark.querySelector('[data-wordmark-locale="ko"]')?.textContent || '포트폴리오',
-  en: wordmark.querySelector('[data-wordmark-locale="en"]')?.textContent || 'Portfolio',
+  ko: publishedTitle,
+  en: document.querySelector('title').dataset.en || publishedTitle,
 } : localizedSiteTitles(site);
 const projectMenu = $('project-menu');
 const projectCards = new Map();

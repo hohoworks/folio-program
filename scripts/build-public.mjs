@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -49,9 +50,7 @@ function renderSiteTitle(html, site) {
   const { ko, en } = localizedSiteTitles(site);
   const koText = escapeHtml(ko);
   const enText = escapeHtml(en);
-  const wordmark = '<a href="#project" class="wordmark">' +
-    `<span data-wordmark-locale="ko" lang="${titleLanguage(ko)}">${koText}</span>` +
-    `<span data-wordmark-locale="en" lang="${titleLanguage(en)}">${enText}</span></a>`;
+  const wordmark = `<a href="#project" class="wordmark" lang="${titleLanguage(ko)}" data-en-lang="${titleLanguage(en)}">${koText}</a>`;
   return html.replace('<title>포트폴리오</title>', () => `<title data-en="${enText}">${koText}</title>`)
     .replace('<a href="#project" class="wordmark" aria-label="홈"></a>', () => wordmark);
 }
@@ -59,6 +58,27 @@ function renderSiteTitle(html, site) {
 function contains(parent, path) {
   const suffix = relative(parent, path);
   return suffix !== '..' && !suffix.startsWith('..' + sep) && !isAbsolute(suffix);
+}
+
+// The HTML and its module imports must start using a new URL together on each code change.
+async function versionClientAssets(directory, paths) {
+  const assets = paths.filter(path => /\.(?:css|js)$/.test(path));
+  const sources = new Map(await Promise.all([...assets, 'index.html', '404.html'].map(async path =>
+    [path, await readFile(join(directory, path), 'utf8')])));
+  const hash = createHash('sha256');
+  for (const path of assets) {
+    hash.update(path).update('\0').update(sources.get(path)).update('\0');
+  }
+  const version = hash.digest('hex').slice(0, 16);
+  const htmlAsset = /(\b(?:src|href)=)(["'])((?:\.\/|\/)([\w-]+\.(?:js|css)))\2/g;
+  const moduleImport = /(\b(?:from\s+|import\s*(?:\(\s*)?))(["'])(\.\/([\w-]+\.js))\2/g;
+  for (const [path, source] of sources) {
+    if (path.endsWith('.css')) continue;
+    const reference = path.endsWith('.html') ? htmlAsset : moduleImport;
+    const updated = source.replace(reference, (match, prefix, quote, url, file) =>
+      sources.has(file) ? prefix + quote + url + '?v=' + version + quote : match);
+    if (updated !== source) await writeFile(join(directory, path), updated);
+  }
 }
 
 async function sourceDirectory(path) {
@@ -131,6 +151,7 @@ export async function buildPublic(projectRoot, { contentDir, outputDir } = {}) {
       }));
       for (const copy of copies) if (copy.status === 'rejected') throw copy.reason;
     }
+    await versionClientAssets(staging, paths);
     await writeFile(join(staging, 'catalog.json'), JSON.stringify(catalog));
     const result = await checkSite(pathToFileURL(staging + sep));
     const old = await statIfPresent(output);
