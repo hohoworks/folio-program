@@ -1009,7 +1009,7 @@ function refreshLocale() {
   $('library-title').lang = locale;
   const toggle = $('language-toggle');
   toggle.dataset.locale = locale === 'ko' ? 'en' : 'ko';
-  $('language-name').textContent = locale === 'ko' ? 'ENG' : '한글';
+  $('language-name').textContent = locale === 'ko' ? '(ENG)' : '(한글)';
   toggle.lang = locale === 'ko' ? 'en' : 'ko';
   toggle.setAttribute('aria-label', locale === 'ko' ? 'Switch to English' : '한국어로 전환');
   const aboutLayout = aboutView.querySelector('.about-layout');
