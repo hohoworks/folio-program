@@ -51,6 +51,7 @@ const messages = {
     emptyContact: '연락처가 아직 등록되지 않았습니다.',
     about: '소개', project: '작업', bookshelf: '책장', category: '분류', year: '연도', all: '전체',
     noMatches: '조건에 맞는 작업이 없습니다.', workTags: '분류와 연도',
+    video: '영상', website: '웹사이트', openWebsite: '새 창에서 열기',
   },
   en: {
     home: 'Home', menu: 'Main navigation', read: 'Read', startOver: 'Read from the start', pageNumber: 'Page number', jump: 'Go', cover: 'Cover',
@@ -63,6 +64,7 @@ const messages = {
     emptyContact: 'Contact details have not been added yet.',
     about: 'About', project: 'Project', bookshelf: 'Book shelf', category: 'Category', year: 'Year', all: 'All',
     noMatches: 'No projects match these filters.', workTags: 'Categories and year',
+    video: 'Video', website: 'Website', openWebsite: 'Open in a new tab',
   },
 };
 let locale = document.documentElement.lang;
@@ -946,6 +948,49 @@ function enterBook(book, returnTo, source) {
   if (!reducedMotion.matches) animateCoverArrival(source);
 }
 
+function labelProjectPlayer(figure, item, index, title) {
+  const label = item.alt || title + ' · ' + t(item.type === 'video' ? 'video' : 'website') + ' ' + (index + 1);
+  if (item.type === 'video') {
+    figure.querySelector('video').setAttribute('aria-label', label);
+  } else {
+    figure.querySelector('iframe').title = label;
+    const link = figure.querySelector('a');
+    link.textContent = t('openWebsite') + ' ↗';
+    link.setAttribute('aria-label', label + ' · ' + t('openWebsite'));
+  }
+}
+
+function addProjectPlayer(figure, item, index, title) {
+  figure.dataset.playerIndex = index;
+  if (item.ratio) figure.style.setProperty('--media-ratio', item.ratio);
+  if (item.type === 'video') {
+    const video = document.createElement('video');
+    video.controls = true;
+    video.playsInline = true;
+    video.preload = index === 0 ? 'metadata' : 'none';
+    video.src = assetURL(item.videoSrc);
+    figure.append(video);
+  } else {
+    const frame = document.createElement('iframe');
+    frame.sandbox.add('allow-scripts');
+    // Cross-origin apps may load modules and fetch their own resources.
+    if (new URL(item.url).origin !== location.origin) frame.sandbox.add('allow-same-origin');
+    frame.allowFullscreen = true;
+    frame.loading = 'lazy';
+    frame.referrerPolicy = 'strict-origin-when-cross-origin';
+    frame.src = item.url;
+    figure.append(frame);
+    const caption = document.createElement('figcaption');
+    const link = document.createElement('a');
+    link.href = item.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    caption.append(link);
+    figure.append(caption);
+  }
+  labelProjectPlayer(figure, item, index, title);
+}
+
 function portfolioRow(entry) {
   const content = itemCopy(entry);
   const row = document.createElement('article');
@@ -958,13 +1003,17 @@ function portfolioRow(entry) {
     cover.setAttribute('aria-label', content.title + ' ' + t('cover'));
     addCoverArt(cover, entry);
   }
-  const images = entry.type === 'book'
+  const media = entry.type === 'book'
     ? [...(entry.coverImages ? [{ imageSrc: entry.coverImages.front, alt: content.title + ' ' + t('cover') }] : []), ...(entry.galleryImages ?? [])]
-    : entry.images;
-  for (const [index, image] of images.entries()) {
+    : entry.media ?? entry.images;
+  for (const [index, item] of media.entries()) {
     const figure = document.createElement('figure');
-    const element = addAssetImage(figure, image.imageSrc, { lazy: index > 0, alt: image.alt });
-    if (entry.type === 'book' && entry.coverImages && index === 0) element.setAttribute('data-cover-alt', '');
+    if (item.type === 'video' || item.type === 'embed') {
+      addProjectPlayer(figure, item, index, content.title);
+    } else {
+      const image = addAssetImage(figure, item.imageSrc, { lazy: index > 0, alt: item.alt });
+      if (entry.type === 'book' && entry.coverImages && index === 0) image.setAttribute('data-cover-alt', '');
+    }
     pictures.append(figure);
   }
   const information = appendText(row, 'div', 'editorial-information', '');
@@ -998,7 +1047,8 @@ function createProjectCard(entry, index) {
   link.lang = titleLanguage(content.title);
   const picture = appendText(link, 'span', 'project-visual', '');
   const isBook = entry.type === 'book';
-  const ratio = isBook ? entry.coverRatio : entry.images[0].ratio;
+  const firstImage = entry.images?.[0];
+  const ratio = isBook ? entry.coverRatio : firstImage?.ratio;
   // Printed books use their trim width. Other formats share a similar visual area.
   function sizePreview(aspect) {
     const widthFactor = isBook ? trimSize(entry)[0] / 220 : Math.sqrt(aspect);
@@ -1011,13 +1061,15 @@ function createProjectCard(entry, index) {
     cover.dataset.book = entry.id;
     cover.setAttribute('aria-hidden', 'true');
     addCoverArt(cover, entry);
-  } else {
-    const fullImage = isBook ? entry.coverImages.front : entry.images[0].imageSrc;
+  } else if (isBook || entry.thumbnailSrc || firstImage) {
+    const fullImage = isBook ? entry.coverImages.front : firstImage?.imageSrc;
     const image = addAssetImage(picture, entry.thumbnailSrc || fullImage, { lazy: index > 2, fallback: fullImage });
     image.decoding = 'async';
     if (!ratio) {
       image.addEventListener('load', () => sizePreview(image.naturalWidth / image.naturalHeight), { once: true });
     }
+  } else {
+    link.dataset.textPreview = '';
   }
   const overlay = appendText(picture, 'span', 'project-card-hover', '');
   overlay.setAttribute('aria-hidden', 'true');
@@ -1130,6 +1182,10 @@ function updateProjectText(entry) {
   if (read) read.textContent = t('read') + ' →';
   const cover = row.querySelector('[data-cover-alt]');
   if (cover) cover.alt = content.title + ' ' + t('cover');
+  for (const figure of row.querySelectorAll('[data-player-index]')) {
+    const index = Number(figure.dataset.playerIndex);
+    labelProjectPlayer(figure, entry.media[index], index, content.title);
+  }
   alignDetailTitle();
 }
 
@@ -1294,6 +1350,10 @@ function showRoute(moveFocus) {
   }
   const key = route.page + ':' + (route.entry?.id ?? '') + (route.page === 'project' ? ':' + JSON.stringify(archiveState()) : '');
   if (key === activeRoute) return;
+  if (route.page !== 'detail' && activeRoute?.startsWith('detail:')) {
+    // Release playing videos and embedded documents as soon as the visitor leaves the project.
+    $('project-detail-content').replaceChildren();
+  }
   stopCoverArrival();
   if (activeBook) goTo(0);
   activeBook = route.page === 'book' ? route.entry : undefined;
