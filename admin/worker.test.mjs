@@ -1315,3 +1315,78 @@ test('starter site title migration is read-only and preserves revision checks an
   const reread = await request('/api/catalog', { cookie });
   assert.equal((await reread.json()).site.title, 'HOHOHO');
 });
+
+test('video uploads preserve binary contents, validate type and reject oversize before storage', async t => {
+  const cookie = await session();
+  const sha = '7'.repeat(40);
+  const mp4 = Uint8Array.from(Buffer.from('000000186674797069736f6d0000020069736f6d6d703431', 'hex'));
+  const webm = Uint8Array.from(Buffer.from('1a45dfa38b4282847765626d42858102', 'hex'));
+  const received = [];
+  const calls = mockGitHub(t, ({ path, body }) => {
+    assert.equal(path, '/git/blobs');
+    received.push(Buffer.from(body.content, 'base64'));
+    return Response.json({ sha });
+  });
+  const upload = (type, bytes, headers = {}) => request('/api/assets', { method: 'POST', cookie, body: bytes, headers: { 'Content-Type': type, ...headers } });
+  for (const [type, file] of [['mp4', mp4], ['webm', webm]]) {
+    const result = await upload('video/' + type, file);
+    assert.equal(result.status, 201);
+    assert.deepEqual(await result.json(), { sha, ext: type });
+    assert.deepEqual(received.at(-1), Buffer.from(file));
+  }
+  assert.equal((await upload('video/mp4', webm)).status, 415);
+  assert.equal((await upload('video/webm', mp4)).status, 415);
+  assert.equal((await upload('video/mp4', mp4, { 'Content-Length': String(16 * 1024 * 1024 + 1) })).status, 413);
+  assert.equal(calls.length, 2);
+});
+
+test('mixed project media saves, reorders and safely removes files with revision checks and private video seeking', async t => {
+  const state = repository(t, { books: [] });
+  const cookie = await session();
+  const save = data => request('/api/projects', { method: 'POST', cookie, body: data });
+  const data = {
+    title: '미디어', published: false, registrationId: crypto.randomUUID(),
+    assets: { media: [
+      { type: 'image', ...imageFile, alt: '처음' },
+      { type: 'video', sha: '2'.repeat(40), ext: 'webm', ratio: 16/9 },
+      { type: 'embed', url: 'https://example.org/frame?q=1', alt: '웹 페이지' },
+      { type: 'image', ...imageFile, alt: '끝' },
+    ] },
+  };
+  const created = await save(data);
+  assert.equal(created.status, 201);
+  const { project } = await created.json();
+  const [first, video, embed, last] = project.media;
+  assert.deepEqual(project.images.map(image => image.imageSrc), [first.imageSrc, last.imageSrc]);
+  assert.equal(video.ratio, 16/9);
+  assert.equal(state.files.size, 3);
+  assert.deepEqual((await (await save(data)).json()).project, project);
+  const preview = '/api/preview?path=' + encodeURIComponent(video.videoSrc);
+  assert.equal((await request(preview)).status, 401);
+  const part = await request(preview, { cookie, headers: { Range: 'bytes=1-2' } });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get('Content-Type'), 'video/webm');
+  assert.equal(part.headers.get('Content-Range'), 'bytes 1-2/3');
+  assert.deepEqual([...new Uint8Array(await part.arrayBuffer())], [2, 3]);
+  assert.equal((await request(preview, { cookie, headers: { Range: 'bytes=10-20' } })).status, 416);
+  const edit = assets => save({ id: project.id, baseRevision: project.revision, assets });
+  assert.equal((await edit({ images: project.images })).status, 409);
+  assert.equal((await edit({ media: [{ ...video, videoSrc: 'assets/projects/elsewhere/video.webm' }] })).status, 400);
+  for (const url of ['javascript:alert(1)', 'https://user:pw@example.org', '<iframe src="https://example.org">', 'http://example.org', 'https://example.org/\npath']) {
+    assert.equal((await edit({ media: [{ type: 'embed', url }] })).status, 400);
+  }
+  assert.equal((await edit({ media: [{ type: 'video', ...imageFile }] })).status, 400);
+  assert.equal((await edit({ media: [{ type: 'image', ext: 'mp4', sha: imageFile.sha }] })).status, 400);
+  const result = await edit({ media: [embed, last, video] });
+  assert.equal(result.status, 200);
+  const updated = (await result.json()).project;
+  assert.deepEqual(updated.media, [embed, last, video]);
+  assert.equal(state.files.has('dist/' + first.imageSrc), false);
+  assert.equal(state.files.has('dist/' + video.videoSrc), true);
+  assert.equal((await edit({ media: [first] })).status, 409);
+  const onlyEmbed = await save({ id: project.id, baseRevision: updated.revision, assets: { media: [embed] } });
+  assert.equal(onlyEmbed.status, 200);
+  assert.deepEqual((await onlyEmbed.json()).project.images, []);
+  assert.equal(state.files.size, 0);
+  assert.equal((await request(preview, { cookie })).status, 404);
+});
