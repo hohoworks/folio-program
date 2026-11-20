@@ -10,7 +10,7 @@ const programFiles = [
   'README.md', 'SPLIT-HOSTING.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'wrangler.jsonc',
   'admin/worker.mjs', 'admin/worker.test.mjs',
   ...['index.html', 'login.html', 'admin.js', 'login.js', 'style.css', 'draft-store.js', 'site-settings.js',
-    'upload-request.js', 'image-encoding.js', 'pdf-layout.js', 'mockup-controls.js', 'mockup-preview.js', 'mockup-preview.css'].map(name => 'admin/public/' + name),
+    'upload-request.js', 'media-order.js', 'image-encoding.js', 'pdf-layout.js', 'mockup-controls.js', 'mockup-preview.js', 'mockup-preview.css'].map(name => 'admin/public/' + name),
   ...['build-admin.mjs', 'build-public.mjs', 'build-public.test.mjs', 'check-site.mjs',
     'local-admin.mjs', 'local-store.mjs', 'local-store.test.mjs', 'prepare-repositories.mjs',
     'prepare-repositories.test.mjs', 'punctuation.test.mjs', 'split-bootstrap.test.mjs'].map(name => 'scripts/' + name),
