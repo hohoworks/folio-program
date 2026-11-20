@@ -308,3 +308,40 @@ test('output cannot replace or nest inside source folders, including through a s
   await assert.rejects(buildPublic(f.root, { contentDir }), /일반 파일/);
   await assert.rejects(readFile(join(f.output, 'catalog.json')), { code: 'ENOENT' });
 });
+
+test('public build retains ordered mixed media, skips private uploads and supports old image-only projects', async t => {
+  const f = await fixture(t);
+  const photo = 'assets/projects/mixed/picture.webp';
+  const video = 'assets/projects/mixed/film.mp4';
+  const hiddenVideo = 'assets/projects/draft/private.webm';
+  await f.write(photo, 'picture');
+  await f.write(video, 'binary film');
+  await f.write(hiddenVideo, 'private film');
+  const media = [
+    { type: 'video', videoSrc: video, ratio: 1.5 },
+    { type: 'image', imageSrc: photo },
+    { type: 'embed', url: 'https://example.com/piece', alt: '인터랙티브' },
+  ];
+  const projects = [
+    { id: 'mixed', title: 'Mixed', media, images: [{ imageSrc: photo }] },
+    { id: 'legacy', title: 'Legacy', images: [{ imageSrc: photo }] },
+    { id: 'web', title: 'Web', media: [media[2]] },
+    { id: 'private', title: 'Private', published: false, media: [{ type: 'video', videoSrc: hiddenVideo }] },
+  ];
+  await f.save({ books: [], projects });
+  await buildPublic(f.root);
+  assert.equal(await readFile(join(f.output, video), 'utf8'), 'binary film');
+  await assert.rejects(readFile(join(f.output, hiddenVideo)), { code: 'ENOENT' });
+  t.mock.method(globalThis, 'fetch', async () => Response.json(await f.read()));
+  const catalog = await loadCatalog();
+  assert.deepEqual(catalog.projects.map(project => project.id), ['mixed', 'legacy', 'web']);
+  assert.deepEqual(catalog.projects[0].media.map(entry => entry.type), ['video', 'image', 'embed']);
+  assert.equal(catalog.projects[0].media[0].ratio, 1.5);
+  assert.equal(catalog.projects[1].media[0].imageSrc, photo);
+  assert.deepEqual(catalog.projects[2].images, []);
+  for (const faulty of [{ type: 'video', videoSrc: 'assets/books/foo/movie.webm' }, { type: 'embed', url: 'data:text/html,hello' }]) {
+    await f.save({ books: [], projects: [{ ...projects[0], media: [faulty] }] });
+    await assert.rejects(buildPublic(f.root), /미디어 형식/);
+    assert.deepEqual((await f.read()).projects[0].media, media);
+  }
+});
