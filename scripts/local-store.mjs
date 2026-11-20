@@ -2,8 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { copyFile, link, lstat, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
+import { isProjectVideoPath } from '../dist/project-media.js';
 
-const managedAsset = /^assets\/(?:books|projects|site)\/[\w-]+\/[\w.-]+\.(?:png|jpe?g|webp)$/i;
+const managedImage = /^assets\/(?:books|projects|site)\/[\w-]+\/[\w.-]+\.(?:png|jpe?g|webp)$/i;
+const managedAsset = path => managedImage.test(path) || (isProjectVideoPath(path) && path.startsWith('assets/'));
 const hash = bytes => createHash('sha1').update(bytes).digest('hex');
 
 export async function createLocalStore(contentDirectory, stateDirectory) {
@@ -22,7 +24,7 @@ export async function createLocalStore(contentDirectory, stateDirectory) {
   }
 
   async function assetPath(relative, createParents = false) {
-    if (!managedAsset.test(relative)) throw new Error('잘못된 이미지 경로입니다.');
+    if (!managedAsset(relative)) throw new Error('잘못된 이미지 경로입니다.');
     const parts = relative.split('/');
     const name = parts.pop();
     let directory = content;
@@ -84,7 +86,7 @@ export async function createLocalStore(contentDirectory, stateDirectory) {
         } finally {
           await rm(temporary, { force: true });
         }
-        for (const path of new Set(removed.filter(path => managedAsset.test(path)))) {
+        for (const path of new Set(removed.filter(managedAsset))) {
           try {
             await rm(await assetPath(path), { force: true });
           } catch (error) {

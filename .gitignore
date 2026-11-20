@@ -10,6 +10,7 @@ public-site/
 .folio-build-*/
 admin/public/vendor/
 admin/public/project-tags.js
+admin/public/project-media.js
 
 /dist/assets/books/
 /dist/assets/projects/

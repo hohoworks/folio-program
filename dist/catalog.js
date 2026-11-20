@@ -1,6 +1,7 @@
 import { validBookColor, mockupViews } from './book-material.js';
 import { resolveMockupDetails } from './mockup-options.js';
 export { trimSize, spineRatio } from './book-material.js';
+import { isProjectVideoPath, projectEmbedURL, projectMedia } from './project-media.js';
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { localizedSiteTitles } from './site-title.js';
 import { displayText } from './punctuation.js';
@@ -103,11 +104,23 @@ export function readerSpreads(book) {
 
 function publishedProject(project) {
   if (!project || project.published === false || typeof project.id !== 'string' || !/^[\w-]+$/.test(project.id)
-      || typeof project.title !== 'string' || !project.title.trim()
-      || !Array.isArray(project.images) || !project.images.length
-      || !project.images.every(image => asset(image?.imageSrc, 'projects'))) {
-    return null;
+      || typeof project.title !== 'string' || !project.title.trim()) return null;
+  const media = [];
+  for (const entry of projectMedia(project)) {
+    const type = entry?.type;
+    const meta = {
+      alt: typeof entry?.alt === 'string' ? displayText(entry.alt) : '',
+      ...(positive(entry?.ratio) ? { ratio: entry.ratio } : {}),
+    };
+    if (type === 'image' && asset(entry.imageSrc, 'projects')) media.push({ type, imageSrc: entry.imageSrc, ...meta });
+    else if (type === 'video' && isProjectVideoPath(entry.videoSrc)) media.push({ type, videoSrc: entry.videoSrc, ...meta });
+    else if (type === 'embed') {
+      const url = projectEmbedURL(entry.url);
+      if (!url) return null;
+      media.push({ type, url, ...meta });
+    } else return null;
   }
+  if (!media.length) return null;
   return {
     type: 'project',
     translations: englishFields(project),
@@ -118,11 +131,8 @@ function publishedProject(project) {
     tagIds: Array.isArray(project.tagIds) ? project.tagIds.filter(id => typeof id === 'string') : undefined,
     description: Array.isArray(project.description) ? project.description.filter(line => typeof line === 'string') : [],
     year: typeof project.year === 'string' || Number.isFinite(project.year) ? String(project.year) : '',
-    images: project.images.map(image => ({
-      imageSrc: image.imageSrc,
-      alt: typeof image.alt === 'string' ? displayText(image.alt) : '',
-      ...(positive(image.ratio) ? { ratio: image.ratio } : {}),
-    })),
+    media,
+    images: media.filter(entry => entry.type === 'image').map(({ type, ...image }) => image),
   };
 }
 
@@ -226,7 +236,7 @@ async function demoCatalog(site) {
   const [{ books }, { demoProjects, demoOrder }] = await Promise.all([
     import('./library.js'), import('./demo-projects.js'),
   ]);
-  const catalog = orderedCatalog(books.map(book => ({ ...book, type: 'book' })), demoProjects, demoOrder, site);
+  const catalog = orderedCatalog(books.map(book => ({ ...book, type: 'book' })), demoProjects.map(project => ({ ...project, media: projectMedia(project) })), demoOrder, site);
   const demoBooks = new Map(catalog.books.map(book => [book.id, book]));
   catalog.books = books.map(book => demoBooks.get(book.id));
   return catalog;

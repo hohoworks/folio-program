@@ -1,3 +1,4 @@
+import { MAX_PROJECT_VIDEO_BYTES, isProjectVideoPath, projectEmbedURL, projectMedia } from '../dist/project-media.js';
 import { STOCK_PROJECT_TAGS, idsFor } from '../dist/project-tags.js';
 import { mockupViews, validBookColor } from '../dist/book-material.js';
 import { mockupDetailFields, validMockupDetail } from '../dist/mockup-options.js';
@@ -10,7 +11,7 @@ const catalogPath = 'dist/catalog.json';
 const maxAssetBytes = 10 * 1024 * 1024;
 const maxPages = 1000;
 // Leave 1,000 files for the viewer, admin bundles, fonts, and other static assets.
-const maxCatalogImages = 19000;
+const maxCatalogFiles = 19000;
 const bindingTypes = new Set(['hardcover', 'saddle-stitch', 'exposed-sewn', 'paperback']);
 const gitSha = /^[a-f0-9]{40}$/;
 const encoder = new TextEncoder();
@@ -28,6 +29,7 @@ const securityHeaders = {
     "script-src 'self' 'wasm-unsafe-eval'",
     "worker-src 'self' blob:",
     "img-src 'self' blob: data:",
+    "media-src 'self' blob:",
     "font-src 'self' blob: data:",
     "style-src 'self'",
     "object-src 'none'",
@@ -240,7 +242,7 @@ function gitConfiguration(env) {
   return { repository, token, branch, ref, privateContent: mode === 'private' };
 }
 
-async function github(git, path, { method = 'GET', body, accept = 'application/vnd.github+json', allowed = [] } = {}) {
+async function github(git, path, { method = 'GET', body, accept = 'application/vnd.github+json', allowed = [], range } = {}) {
   const requestBody = typeof body === 'string' ? body : JSON.stringify(body);
   let response;
   try {
@@ -250,6 +252,7 @@ async function github(git, path, { method = 'GET', body, accept = 'application/v
       cache: 'no-store',
       headers: {
         'Accept': accept,
+        ...(range ? { Range: range } : {}),
         'Authorization': 'Bearer ' + git.token,
         'User-Agent': 'HOHO-WORKS-Admin',
         'X-GitHub-Api-Version': githubVersion,
@@ -427,18 +430,46 @@ function imageDimensions(bytes, ext) {
   return null;
 }
 
+function videoMatches(bytes, ext) {
+  const text = offset => String.fromCharCode(...bytes.subarray(offset, offset + 4));
+  if (ext === 'mp4') {
+    if (bytes.length < 16 || text(4) !== 'ftyp') return false;
+    const size = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(0);
+    if (size < 16 || size > bytes.length || size % 4 !== 0) return false;
+    for (let offset = 8; offset < size; offset += 4) {
+      if (offset !== 12 && /^(?:iso[0-9m]|mp4[12]|avc1|dash|M4V |MSNV)$/i.test(text(offset))) return true;
+    }
+    return false;
+  }
+  if (bytes[0] !== 0x1a || bytes[1] !== 0x45 || bytes[2] !== 0xdf || bytes[3] !== 0xa3) return false;
+  // The WebM doctype element belongs to the short EBML header, before the first segment.
+  for (let offset = 5; offset + 7 <= Math.min(bytes.length, 4096); offset++) {
+    if (bytes[offset] === 0x42 && bytes[offset + 1] === 0x82 && bytes[offset + 2] === 0x84 && text(offset + 3) === 'webm') return true;
+    if (bytes[offset] === 0x18 && bytes[offset + 1] === 0x53 && bytes[offset + 2] === 0x80 && bytes[offset + 3] === 0x67) break;
+  }
+  return false;
+}
+
 async function uploadAsset(request, env) {
-  const ext = imageExtensions.get(mimeType(request));
-  if (!ext) throw new RequestError(415, 'JPG, PNG 또는 WebP 이미지 파일을 선택해주세요.');
-  const bytes = await readLimited(request, maxAssetBytes);
-  if (!imageMatches(bytes, ext)) throw new RequestError(415, '이미지 파일 형식을 확인해주세요.');
-  const dimensions = imageDimensions(bytes, ext);
-  if (!dimensions || dimensions.some(value => value < 1 || value > 16384) || dimensions[0] * dimensions[1] > 64000000) {
-    throw new RequestError(400, '이미지는 가로·세로 16,384px 이하, 총 6,400만 픽셀 이하로 준비해주세요.');
+  const mime = mimeType(request);
+  const video = mime === 'video/mp4' || mime === 'video/webm';
+  const ext = video ? mime.slice(6) : imageExtensions.get(mime);
+  if (!ext) throw new RequestError(415, 'JPG, PNG, WebP 이미지 또는 MP4, WebM 영상을 선택해주세요.');
+  const bytes = await readLimited(request, video ? MAX_PROJECT_VIDEO_BYTES : maxAssetBytes);
+  const file = { ext };
+  if (video) {
+    if (!videoMatches(bytes, ext)) throw new RequestError(415, '영상 파일 형식을 확인해주세요.');
+  } else {
+    if (!imageMatches(bytes, ext)) throw new RequestError(415, '이미지 파일 형식을 확인해주세요.');
+    const dimensions = imageDimensions(bytes, ext);
+    if (!dimensions || dimensions.some(value => value < 1 || value > 16384) || dimensions[0] * dimensions[1] > 64000000) {
+      throw new RequestError(400, '이미지는 가로·세로 16,384px 이하, 총 6,400만 픽셀 이하로 준비해주세요.');
+    }
+    file.ratio = dimensions[0] / dimensions[1];
   }
   if (env.LOCAL_STORE) {
     const sha = await env.LOCAL_STORE.stage(bytes);
-    return json({ sha, ext, ratio: dimensions[0] / dimensions[1] }, 201);
+    return json({ sha, ...file }, 201);
   }
   const git = await checkedRepository(env);
   const response = await github(git, '/git/blobs', {
@@ -446,7 +477,7 @@ async function uploadAsset(request, env) {
     // Generated base64 contains no JSON delimiters, so it needs no string escaping.
     body: '{"encoding":"base64","content":"' + base64(bytes) + '"}',
   });
-  return json({ sha: (await response.json()).sha, ext, ratio: dimensions[0] / dimensions[1] }, 201);
+  return json({ sha: (await response.json()).sha, ...file }, 201);
 }
 
 function validText(value, limit, label, required = false) {
@@ -477,10 +508,11 @@ function itemId(value) {
   return value;
 }
 
-function validAsset(value) {
+function validAsset(value, type = 'image') {
+  const extensions = type === 'video' ? ['mp4', 'webm'] : ['jpg', 'png', 'webp'];
   if (!isRecord(value) || typeof value.sha !== 'string' || !gitSha.test(value.sha) ||
-      !['jpg', 'png', 'webp'].includes(value.ext)) {
-    throw new RequestError(400, '이미지를 먼저 업로드해주세요.');
+      !extensions.includes(value.ext)) {
+    throw new RequestError(400, '파일을 먼저 업로드해주세요.');
   }
   return { sha: value.sha, ext: value.ext };
 }
@@ -490,7 +522,7 @@ function references(item) {
     item.thumbnailSrc,
     ...Object.values(item.coverImages || {}),
     ...(item.pages || []).map(page => page.imageSrc),
-    ...(item.images || []).map(image => image.imageSrc),
+    ...projectMedia(item).map(entry => entry.type === 'video' ? entry.videoSrc : entry.imageSrc),
     ...(item.galleryImages || []).map(image => image.imageSrc),
   ].filter(path => typeof path === 'string').map(path => path.replace(/^\.\//, ''));
 }
@@ -504,8 +536,8 @@ function allReferences(catalog) {
 }
 
 function enforceAssetLimit(catalog) {
-  if (allReferences(catalog).length > maxCatalogImages) {
-    throw new RequestError(400, '사이트 전체 이미지는 19,000개까지 등록할 수 있습니다. 기존 작품을 정리해주세요.');
+  if (allReferences(catalog).length > maxCatalogFiles) {
+    throw new RequestError(400, '사이트 전체 이미지와 영상은 합쳐서 19,000개까지 등록할 수 있습니다. 기존 작품을 정리해주세요.');
   }
 }
 
@@ -626,28 +658,52 @@ function imageList(values, savedImages, prefix, addImage, name, allowEmpty = fal
   const saved = new Map(savedImages.map(image => [image.imageSrc.replace(/^\.\//, ''), image]));
   return values.map((image, index) => {
     if (!isRecord(image)) throw new RequestError(400, '등록할 이미지를 확인해주세요.');
-    let alt = validText(image.alt, 500, '이미지 설명');
-    let ratio = image.ratio;
-    if (ratio !== undefined && (!positive(ratio) || ratio < 1 / 16384 || ratio > 16384)) {
-      throw new RequestError(400, '이미지의 가로와 세로 비율을 확인해주세요.');
+    return fileEntry(image, 'image', saved, prefix, addImage, name + '-' + String(index + 1).padStart(4, '0'));
+  });
+}
+
+function mediaMetadata(entry, previous) {
+  const alt = validText(entry.alt === undefined ? previous?.alt : entry.alt, 500, '설명');
+  const ratio = entry.ratio === undefined ? previous?.ratio : entry.ratio;
+  if (ratio !== undefined && (!positive(ratio) || ratio < 1 / 16384 || ratio > 16384)) {
+    throw new RequestError(400, '가로와 세로 비율을 확인해주세요.');
+  }
+  return { ...(alt ? { alt } : {}), ...(ratio !== undefined ? { ratio } : {}) };
+}
+
+function fileEntry(entry, type, saved, prefix, addAsset, name) {
+  const key = type === 'video' ? 'videoSrc' : 'imageSrc';
+  if (entry[key] === undefined) return { [key]: addAsset(entry, name, type), ...mediaMetadata(entry) };
+  const path = typeof entry[key] === 'string' ? entry[key].replace(/^\.\//, '') : '';
+  if (!path.startsWith(prefix) || !saved.has(path)) throw new RequestError(400, '현재 작품에 등록된 파일만 재사용할 수 있습니다.');
+  return { [key]: path, ...mediaMetadata(entry, saved.get(path)) };
+}
+
+function orderedProjectMedia(values, existing, prefix, addAsset) {
+  if (!Array.isArray(values) || !values.length || values.length > maxPages) {
+    throw new RequestError(400, '프로젝트에는 이미지, 영상, 웹 페이지를 1~1,000개 등록할 수 있습니다.');
+  }
+  const saved = { image: new Map(), video: new Map() };
+  for (const entry of projectMedia(existing)) {
+    if (entry.type === 'image') saved.image.set(entry.imageSrc.replace(/^\.\//, ''), entry);
+    if (entry.type === 'video') saved.video.set(entry.videoSrc.replace(/^\.\//, ''), entry);
+  }
+  return values.map((entry, index) => {
+    if (!isRecord(entry)) throw new RequestError(400, '프로젝트 항목을 확인해주세요.');
+    const { type } = entry;
+    if (type === 'embed') {
+      const url = projectEmbedURL(entry.url);
+      if (!url) throw new RequestError(400, '웹 페이지의 HTTPS 주소를 확인해주세요.');
+      return { type, url, ...mediaMetadata(entry) };
     }
-    let imageSrc;
-    if (image.imageSrc !== undefined) {
-      imageSrc = typeof image.imageSrc === 'string' ? image.imageSrc.replace(/^\.\//, '') : '';
-      if (!imageSrc.startsWith(prefix) || !saved.has(imageSrc)) {
-        throw new RequestError(400, '현재 작품에 등록된 이미지만 재사용할 수 있습니다.');
-      }
-      if (image.alt === undefined) alt = saved.get(imageSrc).alt || '';
-      if (ratio === undefined) ratio = saved.get(imageSrc).ratio;
-    } else {
-      imageSrc = addImage(image, name + '-' + String(index + 1).padStart(4, '0'));
-    }
-    return { imageSrc, ...(alt ? { alt } : {}), ...(ratio !== undefined ? { ratio } : {}) };
+    if (type !== 'image' && type !== 'video') throw new RequestError(400, '프로젝트 항목 유형을 확인해주세요.');
+    const name = type + '-' + String(index + 1).padStart(4, '0');
+    return { type, ...fileEntry(entry, type, saved[type], prefix, addAsset, name) };
   });
 }
 
 function applyThumbnail(item, existing, assets, addImage, kind) {
-  const primary = kind === 'book' ? item.coverImages.front : item.images[0].imageSrc;
+  const primary = kind === 'book' ? item.coverImages.front : item.images?.[0]?.imageSrc;
   const previous = kind === 'book' ? existing?.coverImages?.front : existing?.images?.[0]?.imageSrc;
   if (assets.thumbnail === undefined) {
     if (primary !== previous) delete item.thumbnailSrc;
@@ -656,7 +712,7 @@ function applyThumbnail(item, existing, assets, addImage, kind) {
   delete item.thumbnailSrc;
   if (assets.thumbnail === null) return;
   const thumbnail = validAsset(assets.thumbnail);
-  const submittedPrimary = kind === 'book' ? assets.front : assets.images?.[0];
+  const submittedPrimary = kind === 'book' ? assets.front : assets.media?.find(entry => entry.type === 'image') ?? assets.images?.[0];
   if (thumbnail.sha === submittedPrimary?.sha && thumbnail.ext === submittedPrimary?.ext) return;
   item.thumbnailSrc = addImage(thumbnail, 'thumbnail');
 }
@@ -670,8 +726,8 @@ function buildItem(data, existing, kind, registrationId) {
   const tree = [];
   const prefix = 'assets/' + (kind === 'book' ? 'books/' : 'projects/') + item.id + '/';
   const version = existing ? registrationId + '-' : '';
-  function addImage(file, name) {
-    const image = validAsset(file);
+  function addImage(file, name, type) {
+    const image = validAsset(file, type);
     const path = prefix + version + name + '.' + image.ext;
     tree.push({ path: 'dist/' + path, mode: '100644', type: 'blob', sha: image.sha });
     return path;
@@ -681,8 +737,16 @@ function buildItem(data, existing, kind, registrationId) {
     throw new RequestError(400, '업로드할 이미지를 확인해주세요.');
   }
   if (kind === 'project') {
-    if (assets.images !== undefined || !existing) {
+    if (assets.media !== undefined) {
+      if (assets.images !== undefined) throw new RequestError(400, '프로젝트 항목은 하나의 목록으로 보내주세요.');
+      item.media = orderedProjectMedia(assets.media, existing, prefix, addImage);
+      item.images = item.media.filter(entry => entry.type === 'image').map(({ type, ...image }) => image);
+    } else if (assets.images !== undefined || !existing) {
+      if (existing?.media?.some(entry => entry.type !== 'image')) {
+        throw new RequestError(409, '영상과 웹 페이지를 보존하려면 관리자 화면을 새로고침한 뒤 다시 저장해주세요.');
+      }
       item.images = imageList(assets.images, existing?.images || [], prefix, addImage, 'image');
+      delete item.media;
     }
     applyThumbnail(item, existing, assets, addImage, kind);
     return { item, tree };
@@ -943,7 +1007,7 @@ async function mutateCatalog(env, transform) {
 }
 
 async function saveItem(request, env, kind) {
-  const data = await readJson(request, 1024 * 1024);
+  const data = await readJson(request, kind === 'project' ? 4 * 1024 * 1024 : 1024 * 1024);
   const registrationId = mutationId(data.registrationId);
   if (data.id !== undefined) itemId(data.id);
   let prepared;
@@ -1017,19 +1081,49 @@ async function reorderItems(request, env) {
   });
 }
 
+function partialVideo(bytes, range, headers) {
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(range);
+  const length = bytes.byteLength;
+  if (match && (match[1] || match[2])) {
+    const start = match[1] ? Number(match[1]) : Math.max(0, length - Number(match[2]));
+    const end = match[1] && match[2] ? Math.min(Number(match[2]), length - 1) : length - 1;
+    if (start <= end && start < length) {
+      return new Response(bytes.subarray(start, end + 1), {
+        status: 206,
+        headers: { ...headers, 'Content-Length': String(end - start + 1), 'Content-Range': `bytes ${start}-${end}/${length}` },
+      });
+    }
+  }
+  return new Response(null, { status: 416, headers: { ...headers, 'Content-Range': 'bytes */' + length } });
+}
+
 async function previewAsset(request, env, url) {
   const path = url.searchParams.get('path')?.replace(/^\.\//, '');
-  if (!path || !/^assets\/(?:books|projects|site)\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|webp)$/.test(path)) {
-    throw new RequestError(400, '미리볼 이미지 경로를 확인해주세요.');
+  const video = isProjectVideoPath(path);
+  if (!video && (!path || !/^assets\/(?:books|projects|site)\/[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+\.(?:png|jpg|jpeg|webp)$/.test(path))) {
+    throw new RequestError(400, '미리볼 파일 경로를 확인해주세요.');
   }
   const { git, head, catalog } = await currentSnapshot(env);
-  if (!allReferences(catalog).includes(path)) throw new RequestError(404, '이미지를 찾을 수 없습니다.');
-  const body = env.LOCAL_STORE ? await env.LOCAL_STORE.readAsset(path)
-    : (await github(git, '/contents/dist/' + path + '?ref=' + encodeURIComponent(head), {
-      accept: 'application/vnd.github.raw+json',
-    })).body;
-  const extension = path.split('.').at(-1);
-  return new Response(body, { headers: { ...securityHeaders, 'Content-Type': 'image/' + (extension === 'jpg' ? 'jpeg' : extension) } });
+  if (!allReferences(catalog).includes(path)) throw new RequestError(404, '파일을 찾을 수 없습니다.');
+  const extension = path.split('.').at(-1).toLowerCase();
+  const headers = { ...securityHeaders, 'Content-Type': video ? 'video/' + extension : 'image/' + (extension === 'jpg' ? 'jpeg' : extension) };
+  if (video) headers['Accept-Ranges'] = 'bytes';
+  const range = video ? request.headers.get('Range') : null;
+  if (env.LOCAL_STORE) {
+    const bytes = await env.LOCAL_STORE.readAsset(path);
+    return range ? partialVideo(bytes, range, headers) : new Response(bytes, { headers });
+  }
+  const response = await github(git, '/contents/dist/' + path + '?ref=' + encodeURIComponent(head), {
+    accept: 'application/vnd.github.raw+json', range: /^bytes=\d*-\d*$/i.test(range ?? '') ? range : undefined, allowed: [416],
+  });
+  if (range && response.status === 200) {
+    // Some GitHub Contents responses ignore Range. Satisfy media seeking in the browser.
+    return partialVideo(new Uint8Array(await response.arrayBuffer()), range, headers);
+  }
+  for (const name of ['Content-Length', 'Content-Range']) {
+    if (response.headers.has(name)) headers[name] = response.headers.get(name);
+  }
+  return new Response(response.body, { status: response.status, headers });
 }
 
 const apiMethods = new Map([
@@ -1081,7 +1175,7 @@ async function handle(request, env) {
   if (pathname === '/api/delete' && request.method === 'POST') return deleteItem(request, env);
   if (pathname === '/api/order' && request.method === 'POST') return reorderItems(request, env);
   if ((request.method === 'GET' || request.method === 'HEAD') &&
-      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/image-encoding.js', '/pdf-layout.js', '/mockup-controls.js', '/mockup-preview.js', '/mockup-preview.css'].includes(pathname) || pathname.startsWith('/vendor/'))) {
+      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/project-media.js', '/media-order.js', '/image-encoding.js', '/pdf-layout.js', '/mockup-controls.js', '/mockup-preview.js', '/mockup-preview.css'].includes(pathname) || pathname.startsWith('/vendor/'))) {
     return staticAsset(url, request, env, pathname);
   }
   throw new RequestError(404, '요청한 페이지를 찾을 수 없습니다.');

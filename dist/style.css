@@ -216,6 +216,13 @@ h1:focus { outline: none; }
   overflow-wrap: anywhere;
 }
 .project-card-caption { display: none; }
+.project-card[data-text-preview] .project-card-hover {
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--ink);
+  opacity: 1;
+}
+.project-card[data-text-preview] .project-card-caption { display: none; }
 .project-card:focus-visible { outline-color: var(--accent); outline-offset: 4px; }
 .project-card:focus-visible .project-card-hover { opacity: 1; }
 @media (hover: hover) and (pointer: fine) {
@@ -245,6 +252,10 @@ h1:focus { outline: none; }
 .editorial-images { display: grid; align-content: start; gap: 24px; min-width: 0; padding: clamp(24px, 3.5vw, 58px); }
 .editorial-images figure { display: grid; place-items: start center; margin: 0; min-width: 0; }
 .editorial-images .asset-image { display: block; width: 100%; height: auto; object-fit: contain; }
+.editorial-images video, .editorial-images iframe { display: block; width: 100%; border: 0; }
+.editorial-images video { aspect-ratio: auto var(--media-ratio, 16 / 9); background: #111; }
+.editorial-images iframe { aspect-ratio: var(--media-ratio, 16 / 9); }
+.editorial-images figcaption { justify-self: end; margin-top: 8px; font-size: 13px; }
 .editorial-cover { width: min(100%, 390px); aspect-ratio: var(--portfolio-cover-ratio, .738); position: relative; margin-inline: auto; }
 .editorial-information { min-width: 0; border-left: 1px solid var(--accent); padding: clamp(24px, 3.5vw, 58px); }
 .editorial-copy { position: sticky; top: calc(var(--header-height) + 28px); max-width: 520px; }
