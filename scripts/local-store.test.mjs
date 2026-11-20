@@ -50,3 +50,18 @@ test('failed and concurrent local saves preserve the last complete catalog', asy
   const winner = heads.findIndex(Boolean);
   assert.deepEqual(await store.snapshot(), { head: heads[winner], catalog: edits[winner] });
 });
+
+test('local storage publishes, previews and removes project videos while rejecting video paths outside projects', async t => {
+  const { content, store } = await workspace(t);
+  const before = await store.snapshot();
+  const bytes = Buffer.from([0, 19, 213, 255]);
+  const sha = await store.stage(bytes);
+  const videoSrc = 'assets/projects/work/film.mp4';
+  const media = [{ type: 'video', videoSrc }, { type: 'embed', url: 'https://example.com/frame' }];
+  const catalog = { books: [], projects: [{ id: 'work', media, images: [] }] };
+  await assert.rejects(store.publish(before.head, catalog, [{ path: 'dist/assets/books/work/film.mp4', sha }], []));
+  const head = await store.publish(before.head, catalog, [{ path: 'dist/' + videoSrc, sha }], []);
+  assert.deepEqual(await store.readAsset(videoSrc), bytes);
+  await store.publish(head, before.catalog, [], [videoSrc]);
+  await assert.rejects(readFile(join(content, videoSrc)), { code: 'ENOENT' });
+});
