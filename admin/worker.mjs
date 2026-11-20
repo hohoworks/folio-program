@@ -86,6 +86,34 @@ function urlBase64(bytes) {
   return base64(bytes).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 }
 
+// GitHub accepts binary blobs as base64 JSON. Encode on demand so a full-size
+// video does not also require complete base64, JSON and UTF-8 copies in memory.
+function gitBlobBody(bytes) {
+  const prefix = '{"encoding":"base64","content":"';
+  const suffix = '"}';
+  const chunkSize = 3 * 65536; // Only the last base64 chunk may contain padding.
+  let offset = 0;
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(prefix));
+    },
+    pull(controller) {
+      if (offset < bytes.length) {
+        const chunk = bytes.subarray(offset, offset + chunkSize);
+        controller.enqueue(encoder.encode(base64(chunk)));
+        offset += chunk.length;
+      } else {
+        controller.enqueue(encoder.encode(suffix));
+        controller.close();
+      }
+    },
+  });
+  // Workers use the fixed length as the outgoing Content-Length. Local Fetch
+  // implementations can send the same stream with chunked transfer encoding.
+  const length = prefix.length + 4 * Math.ceil(bytes.length / 3) + suffix.length;
+  return typeof FixedLengthStream === 'function' ? stream.pipeThrough(new FixedLengthStream(length)) : stream;
+}
+
 function cookieValue(value, duration = sessionDuration) {
   return `${sessionCookie}=${value}; Path=/; Max-Age=${duration}; Secure; HttpOnly; SameSite=Strict`;
 }
@@ -243,7 +271,8 @@ function gitConfiguration(env) {
 }
 
 async function github(git, path, { method = 'GET', body, accept = 'application/vnd.github+json', allowed = [], range } = {}) {
-  const requestBody = typeof body === 'string' ? body : JSON.stringify(body);
+  const streaming = body instanceof ReadableStream;
+  const requestBody = streaming || typeof body === 'string' ? body : JSON.stringify(body);
   let response;
   try {
     response = await fetch('https://api.github.com/repos/' + git.repository + path, {
@@ -259,6 +288,7 @@ async function github(git, path, { method = 'GET', body, accept = 'application/v
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
       body: requestBody,
+      ...(streaming ? { duplex: 'half' } : {}),
     });
   } catch {
     throw new RequestError(502, 'GitHub 요청을 전송하지 못했습니다. 최신 관리자 프로그램을 다시 배포한 뒤 다시 시도해주세요.', undefined, 'GITHUB_CONNECTION');
@@ -474,8 +504,7 @@ async function uploadAsset(request, env) {
   const git = await checkedRepository(env);
   const response = await github(git, '/git/blobs', {
     method: 'POST',
-    // Generated base64 contains no JSON delimiters, so it needs no string escaping.
-    body: '{"encoding":"base64","content":"' + base64(bytes) + '"}',
+    body: gitBlobBody(bytes),
   });
   return json({ sha: (await response.json()).sha, ...file }, 201);
 }
