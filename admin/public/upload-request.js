@@ -89,7 +89,7 @@ export function postJson(path, data, signal, onWait) {
   }, onWait);
 }
 
-export function uploadImage(blob, signal, onWait) {
+export function uploadAsset(blob, signal, onWait) {
   return request('/api/assets', {
     method: 'POST',
     headers: { 'Content-Type': blob.type },
@@ -97,3 +97,5 @@ export function uploadImage(blob, signal, onWait) {
     signal,
   }, onWait);
 }
+
+export { uploadAsset as uploadImage };
