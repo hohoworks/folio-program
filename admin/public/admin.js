@@ -6,7 +6,7 @@ import { createSiteEditor } from '/site-settings.js';
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { encodeWebImage, encodeThumbnail, imageTargetBytes } from './image-encoding.js';
 import { bindMediaOrder } from './media-order.js';
-import { MAX_PROJECT_VIDEO_BYTES, projectEmbedURL } from './project-media.js';
+import { MAX_PROJECT_VIDEO_BYTES, projectEmbedURL, projectVideoPlayer } from './project-media.js';
 import { planPdfPages, remainingPdfPages, sidesByShape } from './pdf-layout.js';
 
 const $ = selector => document.querySelector(selector);
@@ -32,7 +32,7 @@ const imageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const maxProjectMedia = 1000;
 const imageAccept = 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp';
 const videoAccept = 'video/mp4,video/webm,.mp4,.webm';
-const mediaNames = { image: '이미지', video: '영상', embed: '웹페이지' };
+const mediaNames = { image: '이미지', video: '영상', embed: '영상·웹 링크' };
 const pdfLayoutLabels = { single: '낱장', spread: '펼침면', mixed: '낱장·펼침면 혼합' };
 const pdfRoot = '/vendor/pdfjs/';
 const fileLabels = { front: '앞표지', back: '뒤표지', spine: '책등', interior: '내지 PDF' };
@@ -565,7 +565,10 @@ function mediaField(entry, field, caption) {
   input.value = entry[field] || '';
   input.addEventListener('input', () => {
     updateMedia(entry, field, input.value);
-    if (address) input.setCustomValidity(input.value && !projectEmbedURL(input.value) ? '올바른 HTTPS 주소를 입력해주세요.' : '');
+    if (address) {
+      input.setCustomValidity(input.value && !projectEmbedURL(input.value) ? '올바른 HTTPS 주소를 입력해주세요.' : '');
+      input.closest('li').querySelector('.media-placeholder').textContent = projectVideoPlayer(input.value)?.provider || '웹페이지';
+    }
   });
   label.append(input);
   return label;
@@ -582,7 +585,8 @@ function videoMime(file) {
 function checkGalleryFile(file, type) {
   if (type === 'video') {
     if (!videoMime(file)) throw new Error('MP4 또는 WebM 영상을 선택해주세요.');
-    if (!file.size || file.size > MAX_PROJECT_VIDEO_BYTES) throw new Error('영상은 비어 있지 않은 16 MiB 이하 파일을 선택해주세요.');
+    if (!file.size) throw new Error('선택한 영상 파일이 비어 있습니다.');
+    if (file.size > MAX_PROJECT_VIDEO_BYTES) throw new Error('영상 파일은 ' + MAX_PROJECT_VIDEO_BYTES / (1024 * 1024) + ' MiB까지 올릴 수 있습니다. 큰 영상은 ‘영상·웹 링크 추가’에 YouTube 또는 Vimeo 공유 링크를 넣어주세요.');
   } else if (!imageTypes.has(file.type) && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
     throw new Error('JPG·PNG·WebP 이미지를 선택해주세요.');
   }
@@ -593,7 +597,8 @@ function filePreview(entry, file, type) {
   if (type === 'embed' || (!file && !source)) {
     const text = document.createElement('span');
     text.className = 'media-placeholder';
-    text.textContent = type === 'embed' ? '웹페이지' : state.uploads[entry.fileKey] ? '업로드 완료' : '원본 재선택';
+    text.textContent = type === 'embed' ? projectVideoPlayer(entry.url)?.provider || '웹페이지'
+      : state.uploads[entry.fileKey] ? '업로드 완료' : '원본 재선택';
     return text;
   }
   const preview = document.createElement(type === 'video' ? 'video' : 'img');
@@ -652,7 +657,7 @@ function renderProjectImages() {
     rowName.textContent = (index + 1) + '. ' + name + (title ? ' · ' + title : '');
     content.append(rowName);
     if (index < entries.length - 1) insertion.add(new Option((index + 1) + '번 ' + name + ' 뒤', entry.id));
-    if (type === 'embed') content.append(mediaField(entry, 'url', '웹페이지 주소'));
+    if (type === 'embed') content.append(mediaField(entry, 'url', '영상·웹 주소'));
     content.append(mediaField(entry, 'alt', type === 'image' ? '이미지 설명' : name + ' 제목'));
     if (entry.fileKey && !file && !state.uploads[entry.fileKey]) content.append(retryFile(entry, name, index));
     const actions = document.createElement('div');
@@ -954,7 +959,7 @@ async function prepareMedia(signal, entries, project) {
     changeProgress(entries.length + 1, index, mediaNames[type] + ' 저장 중 · ' + (index + 1) + ' / ' + entries.length);
     if (type === 'embed') {
       const url = projectEmbedURL(entry.url);
-      if (!url) throw new Error((index + 1) + '번째 웹페이지에 올바른 HTTPS 주소를 입력해주세요.');
+      if (!url) throw new Error((index + 1) + '번째 링크에 올바른 HTTPS 주소를 입력해주세요.');
       asset = { url };
     } else if (type === 'video') {
       asset = await prepareVideo(entry, signal);

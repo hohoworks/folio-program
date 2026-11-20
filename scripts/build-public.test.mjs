@@ -5,6 +5,25 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { buildPublic } from './build-public.mjs';
 import { loadCatalog, readerSpreads } from '../dist/catalog.js';
+import { projectVideoPlayer } from '../dist/project-media.js';
+
+test('video share links resolve to official inline players and preserve share start times and unlisted Vimeo hashes', () => {
+  const id = 'M7lc1UVf-VE';
+  for (const url of ['https://youtu.be/' + id + '?t=90', 'https://m.youtube.com/watch?v=' + id + '&t=1m30s',
+    'https://www.youtube.com/shorts/' + id + '#t=90s', 'https://youtube.com/live/' + id + '?start=90']) {
+    assert.deepEqual(projectVideoPlayer(url), { provider: 'YouTube', src: 'https://www.youtube-nocookie.com/embed/' + id + '?playsinline=1&start=90' });
+  }
+  assert.deepEqual(projectVideoPlayer('https://vimeo.com/76979871/5e2d1c1e6d?share=copy#t=1m'),
+    { provider: 'Vimeo', src: 'https://player.vimeo.com/video/76979871?h=5e2d1c1e6d#t=1m' });
+  assert.equal(projectVideoPlayer('https://www.vimeo.com/76979871')?.src, 'https://player.vimeo.com/video/76979871');
+  for (const src of ['https://www.youtube.com/embed/' + id + '?cc_load_policy=1', 'https://player.vimeo.com/video/76979871?h=5e2d1c1e6d&loop=1']) {
+    assert.equal(projectVideoPlayer(src)?.src, src);
+  }
+  for (const url of ['https://example.com/video', 'https://youtube.com.example/watch?v=' + id,
+    'https://example.com@youtu.be/' + id, 'https://vimeo.com/channels/staffpicks', 'https://youtu.be/', 'http://vimeo.com/123']) {
+    assert.equal(projectVideoPlayer(url), null);
+  }
+});
 
 function assertStaticWordmark(html, expectedText) {
   // Check what the header contains even when scripts and styles have not loaded.

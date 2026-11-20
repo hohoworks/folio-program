@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import worker from './worker.mjs';
+import { MAX_PROJECT_VIDEO_BYTES } from '../dist/project-media.js';
 import { STOCK_PROJECT_TAGS } from '../dist/project-tags.js';
 import { DEFAULT_SITE_TITLE } from '../dist/site-title.js';
 import { planPdfPages, remainingPdfPages } from './public/pdf-layout.js';
@@ -53,7 +54,7 @@ function mockGitHub(t, handler) {
       path: url.pathname.replace('/repos/my-studio/folio-books', ''),
       ref: url.searchParams.get('ref'),
       method: options.method,
-      body: options.body == null ? undefined : JSON.parse(options.body),
+      body: options.body == null ? undefined : await new Response(options.body).json(),
       accept: options.headers.Accept,
     };
     calls.push(call);
@@ -1336,8 +1337,28 @@ test('video uploads preserve binary contents, validate type and reject oversize 
   }
   assert.equal((await upload('video/mp4', webm)).status, 415);
   assert.equal((await upload('video/webm', mp4)).status, 415);
-  assert.equal((await upload('video/mp4', mp4, { 'Content-Length': String(16 * 1024 * 1024 + 1) })).status, 413);
+  assert.equal((await upload('video/mp4', mp4, { 'Content-Length': String(MAX_PROJECT_VIDEO_BYTES + 1) })).status, 413);
   assert.equal(calls.length, 2);
+});
+
+test('a video at the Pages limit reaches GitHub intact and a larger video is rejected without a length header', async t => {
+  assert.equal(MAX_PROJECT_VIDEO_BYTES, 25 * 1024 * 1024);
+  const cookie = await session();
+  const bytes = Buffer.alloc(MAX_PROJECT_VIDEO_BYTES + 1);
+  Buffer.from('000000186674797069736f6d0000020069736f6d6d703431', 'hex').copy(bytes);
+  for (let offset = 65535; offset < bytes.length; offset += 65535) bytes[offset] = offset % 251;
+  bytes[MAX_PROJECT_VIDEO_BYTES - 1] = 0xff;
+  const video = bytes.subarray(0, MAX_PROJECT_VIDEO_BYTES);
+  const calls = mockGitHub(t, ({ path, body }) => {
+    assert.equal(path, '/git/blobs');
+    assert.equal(body.encoding, 'base64');
+    assert.deepEqual(Buffer.from(body.content, 'base64'), video);
+    return Response.json({ sha: '7'.repeat(40) });
+  });
+  const upload = body => request('/api/assets', { method: 'POST', cookie, body, headers: { 'Content-Type': 'video/mp4' } });
+  assert.equal((await upload(video)).status, 201);
+  assert.equal((await upload(bytes)).status, 413);
+  assert.equal(calls.length, 1);
 });
 
 test('mixed project media saves, reorders and safely removes files with revision checks and private video seeking', async t => {
