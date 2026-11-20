@@ -129,6 +129,11 @@
                   </fieldset>
                   <fieldset class="mockup-group material-colors" data-bindings="exposed-sewn saddle-stitch" data-stitch="thread" hidden disabled>
                     <legend>제본 실</legend>
+                    <fieldset data-bindings="exposed-sewn" aria-label="노출사철 실 배치" hidden disabled>
+                      <label for="sewing-station-count">책등 실 개수</label>
+                      <input id="sewing-station-count" type="number" step="1" inputmode="numeric" aria-describedby="sewing-station-help">
+                      <p class="help" id="sewing-station-help">책등 이미지를 비워두면 책등을 따라 실을 1~12줄 배치할 수 있습니다.</p>
+                    </fieldset>
                     <label for="thread-color">실 색</label><input id="thread-color" type="color" value="#9b8261"><label class="check-label"><input id="auto-thread-color" type="checkbox" checked> 자동</label>
                   </fieldset>
                 </details>
