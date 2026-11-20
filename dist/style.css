@@ -255,6 +255,7 @@ h1:focus { outline: none; }
 .editorial-images video, .editorial-images iframe { display: block; width: 100%; border: 0; }
 .editorial-images video { aspect-ratio: auto var(--media-ratio, 16 / 9); background: #111; }
 .editorial-images iframe { aspect-ratio: var(--media-ratio, 16 / 9); }
+.editorial-images [data-video-provider="YouTube"] iframe { min-height: 200px; }
 .editorial-images figcaption { justify-self: end; margin-top: 8px; font-size: 13px; }
 .editorial-cover { width: min(100%, 390px); aspect-ratio: var(--portfolio-cover-ratio, .738); position: relative; margin-inline: auto; }
 .editorial-information { min-width: 0; border-left: 1px solid var(--accent); padding: clamp(24px, 3.5vw, 58px); }
