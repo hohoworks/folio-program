@@ -177,9 +177,16 @@
           <fieldset class="form-section" id="project-specific" aria-labelledby="project-heading">
             <h2 id="project-heading">프로젝트 이미지</h2>
             <p class="help" id="gallery-help">프로젝트에서 보여줄 이미지를 순서대로 추가해주세요.</p>
-            <label for="project-images">이미지 추가</label>
+            <label for="media-insertion">추가할 위치</label>
+            <select id="media-insertion"><option value="end">맨 뒤</option></select>
+            <label for="project-images" id="project-files-label">이미지 추가</label>
             <input id="project-images" type="file" multiple accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp">
+            <div id="project-embed-tools" hidden>
+              <button type="button" class="text-button" id="add-project-embed">웹페이지 추가 +</button>
+              <p class="help">삽입을 허용하는 웹페이지의 HTTPS 주소를 사용하세요.</p>
+            </div>
             <ol id="project-image-list" class="image-list"></ol>
+            <p class="visually-hidden" id="media-order-notice" role="status"></p>
           </fieldset>
         </fieldset>
         <div class="form-actions">
