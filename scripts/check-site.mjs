@@ -1,5 +1,6 @@
 import { lstat, readdir, readFile } from 'node:fs/promises';
 import { demoProjects } from '../dist/demo-projects.js';
+import { isProjectVideoPath, projectEmbedURL, projectMedia } from '../dist/project-media.js';
 import { STOCK_PROJECT_TAGS } from '../dist/project-tags.js';
 
 export function catalogAssets(catalog) {
@@ -67,8 +68,13 @@ export function catalogAssets(catalog) {
     }
   }
   for (const project of catalog.projects || []) {
-    if (!Array.isArray(project.images) || !project.images.length) throw new Error('작업 이미지가 비어 있습니다. ' + project.title);
-    for (const picture of project.images) requireImage(picture?.imageSrc, project.title);
+    const media = projectMedia(project);
+    if (!media.length) throw new Error('작업 미디어가 비어 있습니다. ' + project.title);
+    for (const entry of media) {
+      if (entry?.type === 'image' && /^(?:\.\/)?assets\/projects\//.test(entry.imageSrc)) requireImage(entry.imageSrc, project.title);
+      else if (entry?.type === 'video' && isProjectVideoPath(entry.videoSrc)) images.add(entry.videoSrc.replace(/^\.\//, ''));
+      else if (entry?.type !== 'embed' || !projectEmbedURL(entry.url)) throw new Error('프로젝트 미디어 형식을 확인해주세요. ' + project.title);
+    }
   }
   if (catalog.order != null && (!Array.isArray(catalog.order) || catalog.order.length !== ids.size ||
       new Set(catalog.order).size !== ids.size || !catalog.order.every(id => ids.has(id)))) {
