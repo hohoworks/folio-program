@@ -1,10 +1,12 @@
 import { createMockupPreview } from './mockup-preview.js';
 import { createMockupControls } from './mockup-controls.js';
 import { clearDraft, deleteFile, fileSignature, loadDraft, loadFile, saveDraft, saveFile } from '/draft-store.js';
-import { errorMessage, postJson, request, uploadImage } from '/upload-request.js';
+import { errorMessage, postJson, request, uploadAsset } from '/upload-request.js';
 import { createSiteEditor } from '/site-settings.js';
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { encodeWebImage, encodeThumbnail, imageTargetBytes } from './image-encoding.js';
+import { bindMediaOrder } from './media-order.js';
+import { MAX_PROJECT_VIDEO_BYTES, projectEmbedURL } from './project-media.js';
 import { planPdfPages, remainingPdfPages, sidesByShape } from './pdf-layout.js';
 
 const $ = selector => document.querySelector(selector);
@@ -27,7 +29,10 @@ const mockupPanel = $('#mockup-details');
 const mockupControls = createMockupControls(mockupPanel);
 let previewPageCount;
 const imageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const maxProjectImages = 1000;
+const maxProjectMedia = 1000;
+const imageAccept = 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp';
+const videoAccept = 'video/mp4,video/webm,.mp4,.webm';
+const mediaNames = { image: '이미지', video: '영상', embed: '웹페이지' };
 const pdfLayoutLabels = { single: '낱장', spread: '펼침면', mixed: '낱장·펼침면 혼합' };
 const pdfRoot = '/vendor/pdfjs/';
 const fileLabels = { front: '앞표지', back: '뒤표지', spine: '책등', interior: '내지 PDF' };
@@ -199,11 +204,14 @@ function updateView() {
   $('#book-specific').hidden = !isBook;
   $('#book-specific').disabled = !isBook;
   $('#project-specific').hidden = false;
-  $('#project-specific').disabled = false;
-  $('#project-heading').textContent = isBook ? '프로젝트 이미지 · 선택' : '프로젝트 이미지';
+  $('#project-specific').disabled = pendingFiles.size > 0;
+  $('#project-heading').textContent = isBook ? '프로젝트 이미지 · 선택' : '프로젝트 미디어';
+  $('#project-files-label').textContent = isBook ? '이미지 추가' : '이미지·영상 추가';
+  $('#project-images').accept = isBook ? imageAccept : imageAccept + ',' + videoAccept;
+  $('#project-embed-tools').hidden = isBook;
   $('#gallery-help').textContent = isBook
     ? '책의 앞표지와 함께 프로젝트에서 보여줄 추가 이미지를 등록할 수 있습니다.'
-    : '프로젝트에서 보여줄 이미지를 순서대로 추가해주세요.';
+    : '이미지, MP4·WebM 영상(파일당 ' + MAX_PROJECT_VIDEO_BYTES / (1024 * 1024) + ' MiB까지), 웹페이지를 함께 배치할 수 있습니다. 손잡이를 끌거나 위·아래 버튼으로 순서를 바꾸세요.';
   $('#book-previews').hidden = !isBook;
   $('#case-color').disabled = state.metadata['auto-case-color'];
   $('#paper-color').disabled = state.metadata['auto-paper-color'];
@@ -266,7 +274,7 @@ function updateFileState(key) {
 
 function getFile(key) {
   const file = fileMemory.get(key);
-  if (!file) throw new Error((fileLabels[key] || '이미지') + ' 원본을 다시 선택해주세요. 저장한 진행 상황에서 이어갑니다.');
+  if (!file) throw new Error((fileLabels[key] || '미디어') + ' 원본을 다시 선택해주세요. 저장한 진행 상황에서 이어갑니다.');
   return file;
 }
 
@@ -327,7 +335,7 @@ for (const key of Object.keys(fileLabels)) {
 }
 
 form.addEventListener('input', event => {
-  if (event.target.type === 'file' || event.target.closest('#project-image-list')) return;
+  if (event.target.type === 'file' || event.target.closest('#project-specific')) return;
   readMetadata();
   if (mockupPanel.contains(event.target) || ['title', 'trim-width', 'trim-height', 'spine-width', 'case-color', 'paper-color'].includes(event.target.id)) updateMockup();
   if (event.target.name === 'tagIds') state.tagsTouched = true;
@@ -337,7 +345,7 @@ form.addEventListener('input', event => {
 });
 
 form.addEventListener('change', event => {
-  if (event.target.type === 'file' || event.target.closest('#project-image-list')) return;
+  if (event.target.type === 'file' || event.target.closest('#project-specific')) return;
   readMetadata();
   if (event.target.id === 'kind' && !state.item && !state.tagsTouched) {
     state.tagIds = idsFor({}, state.kind, projectTags);
@@ -521,7 +529,7 @@ function createButton(text, label, action, disabled = false) {
   button.textContent = text;
   button.setAttribute('aria-label', label);
   button.disabled = disabled;
-  button.addEventListener('click', action);
+  if (action) button.addEventListener('click', action);
   return button;
 }
 
@@ -534,94 +542,225 @@ function markImagesChanged() {
   if (state.kind === 'book') state.galleryDirty = true;
 }
 
-function renderProjectImages() {
-  const list = $('#project-image-list');
-  for (const image of list.querySelectorAll('img')) {
-    if (image.src.startsWith('blob:')) URL.revokeObjectURL(image.src);
-  }
-  const images = currentImages();
-  list.replaceChildren(...images.map((image, index) => {
-    const item = document.createElement('li');
-    const preview = document.createElement('img');
-    const file = image.fileKey && fileMemory.get(image.fileKey);
-    preview.alt = image.alt || '프로젝트 이미지 ' + (index + 1);
-    if (file) preview.src = URL.createObjectURL(file);
-    else if (image.imageSrc) preview.src = previewPath(image.imageSrc);
-    else preview.alt = '이미지 원본을 다시 선택해주세요.';
-    const content = document.createElement('div');
-    const label = document.createElement('label');
-    label.textContent = '이미지 설명';
-    const alt = document.createElement('input');
-    alt.type = 'text';
-    alt.maxLength = 500;
-    alt.value = image.alt || '';
-    alt.addEventListener('input', () => {
-      image.alt = alt.value;
-      markImagesChanged();
-      persist();
-    });
-    label.append(alt);
-    content.append(label);
-    if (image.fileKey && !file) {
-      const retry = document.createElement('input');
-      retry.type = 'file';
-      retry.accept = 'image/png,image/jpeg,image/webp';
-      retry.setAttribute('aria-label', '이미지 ' + (index + 1) + ' 원본 재선택');
-      retry.addEventListener('change', () => {
-        const replacement = retry.files[0];
-        if (!replacement) return;
-        trackFileTask(setFile(image.fileKey, replacement).then(renderProjectImages));
-      });
-      content.append(retry);
-    }
-    const actions = document.createElement('div');
-    actions.className = 'item-actions';
-    actions.append(
-      createButton('↑', '이미지 앞으로', () => moveProjectImage(index, -1), index === 0),
-      createButton('↓', '이미지 뒤로', () => moveProjectImage(index, 1), index === images.length - 1),
-      createButton('제거', '이미지 ' + (index + 1) + ' 제거', async () => {
-        images.splice(index, 1);
-        if (image.fileKey) {
-          const descriptor = state.files[image.fileKey];
-          fileMemory.delete(image.fileKey);
-          delete state.files[image.fileKey];
-          delete state.uploads[image.fileKey];
-          if (descriptor) await deleteFile(descriptor.storageKey);
-        }
-        markImagesChanged();
-        await persist();
-        renderProjectImages();
-      }),
-    );
-    item.append(preview, content, actions);
-    return item;
-  }));
+function entryType(entry) {
+  return entry.type || 'image';
 }
 
-function moveProjectImage(index, delta) {
-  const images = currentImages();
-  const [image] = images.splice(index, 1);
-  images.splice(index + delta, 0, image);
+function updateMedia(entry, field, value) {
+  entry[field] = value;
   markImagesChanged();
-  persist();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(persist, 150);
+}
+
+function mediaField(entry, field, caption) {
+  const label = document.createElement('label');
+  label.textContent = caption;
+  const input = document.createElement('input');
+  const address = field === 'url';
+  input.type = address ? 'url' : 'text';
+  input.required = address;
+  input.maxLength = address ? 2048 : 500;
+  if (address) input.placeholder = 'https://';
+  input.value = entry[field] || '';
+  input.addEventListener('input', () => {
+    updateMedia(entry, field, input.value);
+    if (address) input.setCustomValidity(input.value && !projectEmbedURL(input.value) ? '올바른 HTTPS 주소를 입력해주세요.' : '');
+  });
+  label.append(input);
+  return label;
+}
+
+function videoMime(file) {
+  if (['video/mp4', 'video/webm'].includes(file.type)) return file.type;
+  if (file.type && file.type !== 'application/octet-stream') return '';
+  if (/\.mp4$/i.test(file.name)) return 'video/mp4';
+  if (/\.webm$/i.test(file.name)) return 'video/webm';
+  return '';
+}
+
+function checkGalleryFile(file, type) {
+  if (type === 'video') {
+    if (!videoMime(file)) throw new Error('MP4 또는 WebM 영상을 선택해주세요.');
+    if (!file.size || file.size > MAX_PROJECT_VIDEO_BYTES) throw new Error('영상은 비어 있지 않은 16 MiB 이하 파일을 선택해주세요.');
+  } else if (!imageTypes.has(file.type) && !/\.(jpe?g|png|webp)$/i.test(file.name)) {
+    throw new Error('JPG·PNG·WebP 이미지를 선택해주세요.');
+  }
+}
+
+function filePreview(entry, file, type) {
+  const source = entry.imageSrc || entry.videoSrc;
+  if (type === 'embed' || (!file && !source)) {
+    const text = document.createElement('span');
+    text.className = 'media-placeholder';
+    text.textContent = type === 'embed' ? '웹페이지' : state.uploads[entry.fileKey] ? '업로드 완료' : '원본 재선택';
+    return text;
+  }
+  const preview = document.createElement(type === 'video' ? 'video' : 'img');
+  if (type === 'video') {
+    preview.controls = true;
+    preview.preload = file ? 'metadata' : 'none';
+    preview.playsInline = true;
+    preview.addEventListener('loadedmetadata', () => {
+      if (file && preview.videoWidth && preview.videoHeight) entry.ratio = preview.videoWidth / preview.videoHeight;
+    });
+  } else {
+    preview.alt = entry.alt || '';
+    preview.loading = 'lazy';
+  }
+  preview.src = file ? URL.createObjectURL(file) : previewPath(source);
+  return preview;
+}
+
+function retryFile(entry, name, index) {
+  const retry = document.createElement('input');
+  const type = entryType(entry);
+  retry.type = 'file';
+  retry.accept = type === 'video' ? videoAccept : imageAccept;
+  retry.setAttribute('aria-label', name + ' ' + (index + 1) + ' 원본 재선택');
+  retry.addEventListener('change', () => {
+    const file = retry.files[0];
+    if (!file) return;
+    trackFileTask((async () => {
+      checkGalleryFile(file, type);
+      await setFile(entry.fileKey, file);
+      renderProjectImages();
+    })());
+  });
+  return retry;
+}
+
+function renderProjectImages() {
+  const list = $('#project-image-list');
+  for (const preview of list.querySelectorAll('img, video')) {
+    if (preview.src.startsWith('blob:')) URL.revokeObjectURL(preview.src);
+  }
+  const entries = currentImages();
+  const insertion = $('#media-insertion');
+  const selected = insertion.value;
+  insertion.replaceChildren(new Option('맨 뒤', 'end'));
+  if (entries.length) insertion.add(new Option('맨 앞', 'start'));
+  list.replaceChildren(...entries.map((entry, index) => {
+    const type = entryType(entry);
+    const name = mediaNames[type];
+    const item = document.createElement('li');
+    item.dataset.mediaId = entry.id;
+    const file = entry.fileKey && fileMemory.get(entry.fileKey);
+    const content = document.createElement('div');
+    const rowName = document.createElement('strong');
+    const title = file?.name || state.files[entry.fileKey]?.name;
+    rowName.textContent = (index + 1) + '. ' + name + (title ? ' · ' + title : '');
+    content.append(rowName);
+    if (index < entries.length - 1) insertion.add(new Option((index + 1) + '번 ' + name + ' 뒤', entry.id));
+    if (type === 'embed') content.append(mediaField(entry, 'url', '웹페이지 주소'));
+    content.append(mediaField(entry, 'alt', type === 'image' ? '이미지 설명' : name + ' 제목'));
+    if (entry.fileKey && !file && !state.uploads[entry.fileKey]) content.append(retryFile(entry, name, index));
+    const actions = document.createElement('div');
+    actions.className = 'item-actions';
+    const handle = createButton('↕ 끌기', name + ' ' + (index + 1) + ' 순서 조정', null, entries.length < 2);
+    handle.classList.add('media-handle');
+    handle.setAttribute('aria-keyshortcuts', 'ArrowUp ArrowDown');
+    handle.title = '끌거나 위·아래 방향키로 이동';
+    actions.append(handle,
+      createButton('↑ 위로', name + ' 앞으로', () => moveProjectMedia(index, index - 1), index === 0),
+      createButton('↓ 아래로', name + ' 뒤로', () => moveProjectMedia(index, index + 1), index === entries.length - 1),
+      createButton('제거', name + ' ' + (index + 1) + ' 제거', async () => {
+        entries.splice(index, 1);
+        const descriptor = state.files[entry.fileKey];
+        if (entry.fileKey) {
+          fileMemory.delete(entry.fileKey);
+          delete state.files[entry.fileKey];
+          delete state.uploads[entry.fileKey];
+        }
+        markImagesChanged();
+        renderProjectImages();
+        await persist();
+        if (descriptor) await deleteFile(descriptor.storageKey);
+      }),
+    );
+    item.append(filePreview(entry, file, type), content, actions);
+    return item;
+  }));
+  insertion.value = selected;
+  if (!insertion.value) insertion.value = 'end';
+}
+
+function moveProjectMedia(from, to) {
+  const entries = currentImages();
+  if (from < 0 || to < 0 || to >= entries.length || to === from || fields.disabled) return;
+  const list = $('#project-image-list');
+  const focused = document.activeElement;
+  const focusedRow = list.contains(focused) ? focused.closest('li') : null;
+  const focusIndex = focusedRow ? [...focusedRow.querySelectorAll('button, input')].indexOf(focused) : -1;
+  const caret = focused instanceof HTMLInputElement && focused.selectionStart !== null
+    ? [focused.selectionStart, focused.selectionEnd] : null;
+  const [entry] = entries.splice(from, 1);
+  entries.splice(to, 0, entry);
+  markImagesChanged();
   renderProjectImages();
+  $('#media-order-notice').textContent = mediaNames[entryType(entry)] + ' 항목을 ' + (to + 1) + '번째로 이동했습니다.';
+  if (focusIndex >= 0) {
+    const row = [...list.children].find(item => item.dataset.mediaId === focusedRow.dataset.mediaId);
+    const control = row.querySelectorAll('button, input')[focusIndex];
+    const target = control.disabled ? row.querySelector('.media-handle') : control;
+    target.focus({ preventScroll: true });
+    if (caret) target.setSelectionRange(...caret);
+  }
+  persist();
+}
+
+bindMediaOrder($('#project-image-list'), moveProjectMedia);
+
+function insertionIndex(entries) {
+  const position = $('#media-insertion').value;
+  if (position === 'start') return 0;
+  const previous = entries.findIndex(entry => entry.id === position);
+  return previous < 0 ? entries.length : previous + 1;
 }
 
 $('#project-images').addEventListener('change', () => {
-  const files = [...$('#project-images').files];
+  const input = $('#project-images');
+  const files = [...input.files];
+  input.value = '';
   if (!files.length) return;
+  const entries = currentImages();
+  let index = insertionIndex(entries);
+  const isBook = state.kind === 'book';
+  error.textContent = '';
   const task = (async () => {
-    for (const file of files) {
+    if (entries.length + files.length > maxProjectMedia) throw new Error('미디어는 1,000개까지 추가할 수 있습니다.');
+    const items = files.map(file => {
+      const type = !isBook && videoMime(file) ? 'video' : 'image';
+      checkGalleryFile(file, type);
+      return { file, type };
+    });
+    for (const { file, type } of items) {
       const fileKey = 'project:' + crypto.randomUUID();
       await setFile(fileKey, file);
-      currentImages().push({ id: crypto.randomUUID(), fileKey, alt: '' });
+      entries.splice(index++, 0, { id: crypto.randomUUID(), type, fileKey, alt: '' });
       markImagesChanged();
       await persist();
     }
-    $('#project-images').value = '';
+    $('#media-insertion').value = 'end';
     renderProjectImages();
   })();
   trackFileTask(task);
+});
+
+$('#add-project-embed').addEventListener('click', () => {
+  if (state.kind !== 'project') return;
+  const entries = currentImages();
+  if (entries.length >= maxProjectMedia) {
+    error.textContent = '미디어는 1,000개까지 추가할 수 있습니다.';
+    return;
+  }
+  const index = insertionIndex(entries);
+  entries.splice(index, 0, { id: crypto.randomUUID(), type: 'embed', url: '', alt: '' });
+  $('#media-insertion').value = 'end';
+  markImagesChanged();
+  renderProjectImages();
+  $('#project-image-list').children[index].querySelector('input[type="url"]').focus();
+  persist();
 });
 
 function changeProgress(maximum, completed, message) {
@@ -656,7 +795,7 @@ async function uploadFileAsset(key, label, signal, thumbnail = false) {
   checkpointStop(signal);
   const converted = await convertCover(getFile(key), label, thumbnail);
   if (!saved) {
-    const asset = await uploadImage(converted.blob, signal, waitingMessage);
+    const asset = await uploadAsset(converted.blob, signal, waitingMessage);
     saved = { asset, ratio: converted.ratio, signature };
     state.uploads[key] = saved;
     if (thumbnail) {
@@ -667,7 +806,7 @@ async function uploadFileAsset(key, label, signal, thumbnail = false) {
   if (thumbnail && !saved.thumbnailReady) {
     try {
       saved.thumbnailAsset = converted.thumbnail
-        ? await uploadImage(converted.thumbnail, signal, waitingMessage) : null;
+        ? await uploadAsset(converted.thumbnail, signal, waitingMessage) : null;
     } catch {
       checkpointStop(signal);
       saved.thumbnailAsset = null;
@@ -745,7 +884,7 @@ async function prepareBook(signal) {
               const current = state.pdf.pages.length + 1;
               changeProgress(state.pdf.total + 1, current - 1, '내지 저장 중 · ' + current + ' / ' + state.pdf.total + '쪽');
               const { blob, ratio } = await renderPDFPage(page, sheet.count, side, 2000);
-              const asset = await uploadImage(blob, signal, waitingMessage);
+              const asset = await uploadAsset(blob, signal, waitingMessage);
               state.pdf.pages.push(asset);
               state.pdf.ratio ??= ratio;
               await persist();
@@ -764,7 +903,7 @@ async function prepareBook(signal) {
   const trimSizeMm = meta['trim-width'] ? [Number(meta['trim-width']), Number(meta['trim-height'])] : null;
   const spineRatio = state.uploads.spine?.ratio;
   const inferredSpineWidth = trimSizeMm && spineRatio ? trimSizeMm[1] * spineRatio : undefined;
-  if (state.galleryDirty) assets.galleryImages = await prepareImages(signal, state.galleryImages);
+  if (state.galleryDirty) assets.galleryImages = await prepareMedia(signal, state.galleryImages, false);
   return {
     ...commonPayload(),
     language: meta.language?.trim() || '',
@@ -784,34 +923,61 @@ async function prepareBook(signal) {
   };
 }
 
-async function prepareProject(signal) {
-  if (!state.images.length) throw new Error('프로젝트 이미지를 한 장 이상 추가해주세요.');
-  const images = await prepareImages(signal, state.images, true);
-  const first = state.images[0];
-  const uploaded = first.fileKey && state.uploads[first.fileKey];
-  const assets = { images };
-  if (uploaded?.thumbnailReady) assets.thumbnail = uploaded.thumbnailAsset;
-  return { ...commonPayload(), assets };
+async function prepareVideo(entry, signal) {
+  if (entry.videoSrc) return { videoSrc: entry.videoSrc };
+  const key = entry.fileKey;
+  const signature = state.files[key]?.signature;
+  let saved = state.uploads[key];
+  if (!saved || saved.signature !== signature) {
+    const file = getFile(key);
+    checkGalleryFile(file, 'video');
+    const mime = videoMime(file);
+    const blob = file.type === mime ? file : file.slice(0, file.size, mime);
+    const asset = await uploadAsset(blob, signal, waitingMessage);
+    state.uploads[key] = saved = { asset, signature };
+    await persist();
+    checkpointStop(signal);
+  }
+  return { sha: saved.asset.sha, ext: saved.asset.ext };
 }
 
-async function prepareImages(signal, entries, thumbnail = false) {
-  if (entries.length > maxProjectImages) throw new Error('프로젝트 이미지는 1,000장까지 등록할 수 있습니다.');
-  const images = [];
-  for (let index = 0; index < entries.length; index++) {
+async function prepareMedia(signal, entries, project) {
+  if (entries.length > maxProjectMedia) throw new Error('미디어는 1,000개까지 등록할 수 있습니다.');
+  const firstImage = project && entries.find(entry => entryType(entry) === 'image');
+  const result = [];
+  for (const [index, entry] of entries.entries()) {
     checkpointStop(signal);
-    const image = entries[index];
-    changeProgress(entries.length + 1, index, '이미지 저장 중 · ' + (index + 1) + ' / ' + entries.length);
-    if (image.imageSrc) {
-      images.push({
-        imageSrc: image.imageSrc, alt: image.alt || '',
-        ...(Number.isFinite(image.ratio) && image.ratio > 0 ? { ratio: image.ratio } : {}),
-      });
+    const type = entryType(entry);
+    const alt = entry.alt || '';
+    let ratio = entry.ratio;
+    let asset;
+    changeProgress(entries.length + 1, index, mediaNames[type] + ' 저장 중 · ' + (index + 1) + ' / ' + entries.length);
+    if (type === 'embed') {
+      const url = projectEmbedURL(entry.url);
+      if (!url) throw new Error((index + 1) + '번째 웹페이지에 올바른 HTTPS 주소를 입력해주세요.');
+      asset = { url };
+    } else if (type === 'video') {
+      asset = await prepareVideo(entry, signal);
+      ratio = entry.ratio;
+    } else if (entry.imageSrc) {
+      asset = { imageSrc: entry.imageSrc };
     } else {
-      const file = await uploadFileAsset(image.fileKey, '프로젝트 이미지', signal, thumbnail && index === 0);
-      images.push({ ...file.asset, ratio: file.ratio || file.asset.ratio, alt: image.alt || '' });
+      const saved = await uploadFileAsset(entry.fileKey, '프로젝트 이미지', signal, entry === firstImage);
+      asset = { sha: saved.asset.sha, ext: saved.asset.ext };
+      ratio = saved.ratio;
     }
+    result.push({ ...(project ? { type } : {}), ...asset, alt, ...(Number.isFinite(ratio) && ratio > 0 ? { ratio } : {}) });
   }
-  return images;
+  return result;
+}
+
+async function prepareProject(signal) {
+  if (!state.images.length) throw new Error('프로젝트에 이미지, 영상 또는 웹페이지를 한 개 이상 추가해주세요.');
+  const assets = { media: await prepareMedia(signal, state.images, true) };
+  const firstImage = state.images.find(entry => entryType(entry) === 'image');
+  const thumbnail = firstImage?.fileKey && state.uploads[firstImage.fileKey];
+  if (thumbnail?.thumbnailReady) assets.thumbnail = thumbnail.thumbnailAsset;
+  return { ...commonPayload(), assets };
 }
 
 async function saveItem() {
@@ -935,7 +1101,7 @@ async function editItem(item) {
       'first-page-side': item.firstPageSide ?? '',
       'join-split': item.joinSplitPages === true,
     };
-    state.images = (item.images || []).map(image => ({ ...image, id: crypto.randomUUID() }));
+    state.images = (item.media ?? item.images ?? []).map(entry => ({ ...entry, id: crypto.randomUUID() }));
     state.galleryImages = (item.galleryImages || []).map(image => ({ ...image, id: crypto.randomUUID() }));
     writeMetadata();
     await persist();
@@ -1052,7 +1218,7 @@ function renderCatalogue() {
     metadata.textContent = [item.kind === 'book' ? '책' : '프로젝트', item.year, item.published === false ? '비공개' : '공개', labels.join(', ')].filter(Boolean).join(' · ');
     const content = document.createElement('div');
     content.append(title, metadata);
-    const thumbnailPath = item.thumbnailSrc || (item.kind === 'book' ? item.coverImages?.front : item.images?.[0]?.imageSrc);
+    const thumbnailPath = item.thumbnailSrc || (item.kind === 'book' ? item.coverImages?.front : (item.media ?? item.images)?.find(entry => entry.imageSrc)?.imageSrc);
     const thumbnail = document.createElement(thumbnailPath ? 'img' : 'span');
     thumbnail.className = 'catalogue-thumbnail';
     if (thumbnailPath) {
@@ -1174,7 +1340,7 @@ async function initialize() {
   renderProjectImages();
   if (saved?.version === 2) {
     const completed = state.pdf?.pages.length || Object.keys(state.uploads).length;
-    notice.textContent = '임시 작업을 불러왔습니다.' + (completed ? ' 저장된 ' + completed + '개 이미지부터 이어갈 수 있습니다.' : '');
+    notice.textContent = '임시 작업을 불러왔습니다.' + (completed ? ' 저장된 ' + completed + '개 파일부터 이어갈 수 있습니다.' : '');
     if (state.commitPayload) status.textContent = '이전 저장 결과를 확인해주세요. 저장 확인을 누르면 같은 요청을 이어갑니다.';
   }
   await switchSection(location.hash === '#settings' ? 'site' : 'work');
