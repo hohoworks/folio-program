@@ -132,6 +132,9 @@ function setPhysicalDetails(surface, book, width) {
     '--ribbon-color': d.ribbonColor, '--ribbon-length': length(d.ribbonLengthMm),
     '--ribbon-angle': d.ribbonAngle + 'deg',
     '--staple-color': d.stapleColor, '--staple-width': length(d.stapleThicknessMm),
+    // Each tile has two evenly spaced rows of stitching.
+    '--sewing-tile-height': book.bindingType === 'exposed-sewn' && !book.coverImages?.spine
+      ? 200 / d.sewingStationCount + '%' : null,
     '--thread-color': d.threadColor,
     '--gloss-strength': d.coverGloss / 100,
   };
