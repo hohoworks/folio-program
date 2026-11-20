@@ -1,8 +1,11 @@
+import { createMockupPreview } from './mockup-preview.js';
+import { createMockupControls } from './mockup-controls.js';
 import { clearDraft, deleteFile, fileSignature, loadDraft, loadFile, saveDraft, saveFile } from '/draft-store.js';
 import { errorMessage, postJson, request, uploadImage } from '/upload-request.js';
 import { createSiteEditor } from '/site-settings.js';
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { encodeWebImage, encodeThumbnail, imageTargetBytes } from './image-encoding.js';
+import { planPdfPages, remainingPdfPages, sidesByShape } from './pdf-layout.js';
 
 const $ = selector => document.querySelector(selector);
 const form = $('#book-form');
@@ -12,11 +15,20 @@ const progress = $('#upload-progress');
 const status = $('#form-status');
 const error = $('#form-error');
 const notice = $('#draft-notice');
-const metadataFields = ['title', 'description', 'category', 'title-en', 'description-en', 'category-en', 'year', 'language', 'language-en', 'trim-width', 'trim-height', 'spine-width', 'binding-type', 'page-layout'];
-const checkboxFields = ['published', 'back-remove', 'spine-remove'];
-const metadataDefaults = { 'binding-type': 'paperback', 'page-layout': 'single', published: true };
+const metadataFields = ['title', 'description', 'category', 'title-en', 'description-en', 'category-en', 'year', 'language', 'language-en', 'trim-width', 'trim-height', 'spine-width', 'binding-type', 'page-layout', 'first-page-side', 'mockup-view', 'case-color', 'paper-color'];
+const checkboxFields = ['published', 'back-remove', 'spine-remove', 'join-split', 'auto-case-color', 'auto-paper-color', 'page-jump', 'resume-reading'];
+const metadataDefaults = {
+  'binding-type': 'paperback', 'page-layout': 'auto', published: true,
+  'mockup-view': 'spine', 'case-color': '#b3a897', 'paper-color': '#efede4',
+  'auto-case-color': true, 'auto-paper-color': true, 'page-jump': true, 'resume-reading': true,
+};
+const renderMockup = createMockupPreview($('#mockup-preview'));
+const mockupPanel = $('#mockup-details');
+const mockupControls = createMockupControls(mockupPanel);
+let previewPageCount;
 const imageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const pageLimit = 1000;
+const maxProjectImages = 1000;
+const pdfLayoutLabels = { single: '낱장', spread: '펼침면', mixed: '낱장·펼침면 혼합' };
 const pdfRoot = '/vendor/pdfjs/';
 const fileLabels = { front: '앞표지', back: '뒤표지', spine: '책등', interior: '내지 PDF' };
 let pdfLibrary;
@@ -25,6 +37,7 @@ let catalog = [];
 let fileMemory = new Map();
 let persistence = Promise.resolve();
 let pendingFiles = new Set();
+const latestSelection = new Map();
 let activeController;
 let busy = false;
 let catalogBusy = false;
@@ -38,6 +51,34 @@ let siteEditor;
 let projectTags = STOCK_PROJECT_TAGS;
 let tagsLoaded = false;
 let lastCommittedSite;
+
+// Keep title brackets an explicit editorial choice, including when wrapping selected text.
+for (const field of document.querySelectorAll('.language-fields textarea, .language-fields input[type="text"]')) {
+  const label = field.labels[0];
+  const row = document.createElement('div');
+  row.className = 'editorial-field';
+  const insert = document.createElement('button');
+  insert.type = 'button';
+  insert.className = 'insert-title-brackets';
+  insert.textContent = '〈 〉';
+  insert.title = '제목 괄호 넣기';
+  insert.setAttribute('aria-label', label.firstChild.textContent.trim() + '에 제목 괄호 넣기');
+  label.before(row);
+  row.append(label, field, insert);
+  field.addEventListener('focus', updateAvailability);
+  field.addEventListener('input', updateAvailability);
+  function updateAvailability() {
+    insert.disabled = field.maxLength >= 0 && field.value.length + 2 > field.maxLength;
+  }
+  insert.addEventListener('click', () => {
+    const start = field.selectionStart;
+    const end = field.selectionEnd;
+    field.setRangeText('〈' + field.value.slice(start, end) + '〉', start, end, 'end');
+    field.focus();
+    field.setSelectionRange(start + 1, end + 1);
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
 
 function updateTabTitle() {
   const section = $('#site-panel').hidden ? '작업 관리' : '사이트 설정';
@@ -89,6 +130,7 @@ function persist() {
 function readMetadata() {
   for (const id of metadataFields) state.metadata[id] = $('#' + id).value;
   for (const id of checkboxFields) state.metadata[id] = $('#' + id).checked;
+  state.metadata.mockupDetails = mockupControls.read();
   state.kind = $('#kind').value;
   if (tagsLoaded) state.tagIds = [...$('#work-tags').querySelectorAll('input:checked')].map(input => input.value);
 }
@@ -96,6 +138,7 @@ function readMetadata() {
 function writeMetadata() {
   for (const id of metadataFields) $('#' + id).value = state.metadata[id] ?? '';
   for (const id of checkboxFields) $('#' + id).checked = Boolean(state.metadata[id]);
+  mockupControls.write(state.metadata.mockupDetails);
   $('#kind').value = state.kind;
   renderWorkTags();
 }
@@ -116,6 +159,40 @@ function renderWorkTags() {
   }));
 }
 
+function bookPreferences(item) {
+  return {
+    mockupDetails: item?.mockupDetails,
+    'mockup-view': item?.mockupView ?? 'spine',
+    'case-color': item?.caseColor ?? metadataDefaults['case-color'],
+    'paper-color': item?.paperColor ?? metadataDefaults['paper-color'],
+    'auto-case-color': !item?.caseColor, 'auto-paper-color': !item?.paperColor,
+    'page-jump': item?.pageJumpEnabled !== false, 'resume-reading': item?.resumeReadingEnabled !== false,
+  };
+}
+
+function updateMockup() {
+  if (state.kind !== 'book') return;
+  const meta = state.metadata;
+  const coverImages = {};
+  for (const name of ['front', 'back', 'spine']) {
+    const saved = state.item?.coverImages?.[name];
+    if (!meta[name + '-remove']) coverImages[name] = fileMemory.get(name) ??
+      (!state.files[name] && saved ? previewPath(saved) : undefined);
+  }
+  const width = Number(meta['trim-width']), height = Number(meta['trim-height']);
+  const count = state.item?.pages?.length || 0;
+  renderMockup({
+    title: meta.title || '', coverImages, bindingType: meta['binding-type'], mockupView: meta['mockup-view'],
+    mockupDetails: meta.mockupDetails,
+    trimSizeMm: width > 0 && height > 0 ? [width, height] : undefined,
+    coverRatio: state.uploads.front?.ratio ?? state.item?.coverRatio,
+    spineWidthMm: Number(meta['spine-width']) > 0 ? Number(meta['spine-width']) : undefined,
+    pageCount: state.files.interior ? previewPageCount ?? 0 : meta['join-split'] ? Math.ceil(count / 2) : count,
+    caseColor: meta['auto-case-color'] ? null : meta['case-color'],
+    paperColor: meta['auto-paper-color'] ? null : meta['paper-color'],
+  });
+}
+
 function updateView() {
   if (!state) return;
   const isBook = state.kind === 'book';
@@ -128,6 +205,10 @@ function updateView() {
     ? '책의 앞표지와 함께 프로젝트에서 보여줄 추가 이미지를 등록할 수 있습니다.'
     : '프로젝트에서 보여줄 이미지를 순서대로 추가해주세요.';
   $('#book-previews').hidden = !isBook;
+  $('#case-color').disabled = state.metadata['auto-case-color'];
+  $('#paper-color').disabled = state.metadata['auto-paper-color'];
+  mockupControls.update(state.metadata['binding-type']);
+  updateMockup();
   $('#kind').disabled = Boolean(state.item) || pendingFiles.size > 0;
   $('#editor-heading').textContent = state.item ? '작업 수정' : '작업 추가';
   $('#back-remove-row').hidden = !state.item?.coverImages?.back;
@@ -138,6 +219,13 @@ function updateView() {
     'exposed-sewn': '책등 이미지를 비워두면 노출된 실과 종이 결이 표시됩니다.',
   };
   $('#binding-help').textContent = bindingHelp[$('#binding-type').value] || '책등 이미지가 없으면 제본 방식에 맞춰 책등을 표시합니다.';
+  const existingInterior = state.item?.pages?.length && !state.files.interior;
+  $('#page-layout').disabled = Boolean(existingInterior);
+  $('#page-layout-help').textContent = existingInterior
+    ? '기존 내지 · ' + (pdfLayoutLabels[state.item.pdfLayout] || '원본 구성 기록 없음') + '. PDF를 교체하면 구성을 다시 선택할 수 있습니다.'
+    : '자동 인식은 재단 크기 또는 앞표지 비율을 기준으로 각 페이지를 확인합니다. 펼침면은 왼쪽, 오른쪽 순으로 저장합니다.';
+  $('#join-split-row').hidden = !existingInterior || state.item.pages.length % 2 !== 0 ||
+    Boolean(state.item.pdfLayout && state.item.pdfLayout !== 'spread' && !state.item.joinSplitPages);
   fields.disabled = busy || editorBusy || siteBusy || Boolean(state.commitPayload);
   publish.disabled = !tagsLoaded || busy || editorBusy || siteBusy || catalogBusy || pendingFiles.size > 0;
   publish.textContent = state.commitPayload ? '저장 확인 →' : state.pdf?.pages.length ? '이어서 저장 →' : '저장 →';
@@ -184,8 +272,11 @@ function getFile(key) {
 
 async function setFile(key, file) {
   const currentGeneration = generation;
+  const selection = Symbol();
+  latestSelection.set(key, selection);
   const signature = await fileSignature(file);
-  if (currentGeneration !== generation) return;
+  if (currentGeneration !== generation || latestSelection.get(key) !== selection) return;
+  latestSelection.delete(key);
   const previous = state.files[key];
   if (previous && previous.signature !== signature && !fileMemory.has(key) &&
       !window.confirm('저장된 원본과 다른 파일입니다. 이 파일의 업로드 진행 상황을 비우고 교체할까요?')) {
@@ -193,7 +284,13 @@ async function setFile(key, file) {
   }
   if (previous?.signature !== signature) {
     delete state.uploads[key];
-    if (key === 'interior') state.pdf = null;
+    if (key === 'interior') {
+      state.pdf = null;
+      if (state.item && !previous) {
+        $('#page-layout').value = state.metadata['page-layout'] = 'auto';
+      }
+      state.metadata['join-split'] = $('#join-split').checked = false;
+    }
     state.commitPayload = null;
     state.registrationId = crypto.randomUUID();
   }
@@ -232,6 +329,7 @@ for (const key of Object.keys(fileLabels)) {
 form.addEventListener('input', event => {
   if (event.target.type === 'file' || event.target.closest('#project-image-list')) return;
   readMetadata();
+  if (mockupPanel.contains(event.target) || ['title', 'trim-width', 'trim-height', 'spine-width', 'case-color', 'paper-color'].includes(event.target.id)) updateMockup();
   if (event.target.name === 'tagIds') state.tagsTouched = true;
   state.registrationId = crypto.randomUUID();
   clearTimeout(saveTimer);
@@ -249,7 +347,7 @@ form.addEventListener('change', event => {
   updateView();
   persist();
   if (event.target.id === 'kind') renderProjectImages();
-  if (event.target.id === 'page-layout' || event.target.id === 'kind') updateBookPreviews();
+  if (['page-layout', 'kind', 'join-split', 'trim-width', 'trim-height'].includes(event.target.id)) updateBookPreviews();
 });
 function createCanvas(width, height) {
   const canvas = document.createElement('canvas');
@@ -344,18 +442,26 @@ async function renderPDFPage(page, pagesPerSheet, side, maxSize) {
   }
 }
 
+function referencePageRatio(coverRatio) {
+  const width = Number(state.metadata['trim-width']);
+  const height = Number(state.metadata['trim-height']);
+  return width > 0 && height > 0 ? width / height : coverRatio;
+}
 
 async function updateBookPreviews() {
   const version = ++previewVersion;
+  previewPageCount = undefined;
   const cover = $('#cover-preview');
   const pdfImage = $('#pdf-preview');
   const count = $('#preview-page-count');
   const coverFile = fileMemory.get('front');
+  let coverRatio = state.files.front ? state.uploads.front?.ratio : state.item?.coverRatio;
   const savedFront = !state.files.front && state.item?.coverImages?.front;
   showPreview(cover, savedFront ? previewPath(savedFront) : null, state.files.front ? '앞표지 원본을 다시 선택해주세요.' : '앞표지를 선택해주세요.');
   if (coverFile) {
     try {
-      const { blob } = await convertCover(coverFile, '앞표지');
+      const { blob, ratio } = await convertCover(coverFile, '앞표지');
+      coverRatio = ratio;
       if (version === previewVersion) showPreview(cover, blob);
     } catch (cause) {
       if (version === previewVersion) showPreview(cover, null, errorMessage(cause));
@@ -364,7 +470,15 @@ async function updateBookPreviews() {
   if (version !== previewVersion) return;
   const firstPage = !state.files.interior && state.item?.pages?.[0]?.imageSrc;
   showPreview(pdfImage, firstPage ? previewPath(firstPage) : null, state.files.interior ? '내지 PDF 원본을 다시 선택해주세요.' : '내지 PDF를 선택해주세요.');
-  count.textContent = state.item?.pages?.length ? ' · 총 ' + state.item.pages.length + '쪽' : '';
+  const joined = Boolean(firstPage && state.metadata['join-split'] && state.item.pages.length % 2 === 0);
+  $('#pdf-preview-stage').classList.toggle('joined', joined);
+  const right = $('#pdf-preview-right');
+  right.hidden = !joined;
+  if (joined) right.src = previewPath(state.item.pages[1].imageSrc);
+  else right.removeAttribute('src');
+  count.textContent = firstPage ? joined
+    ? ' · 저장 이미지 ' + state.item.pages.length + '장 → 공개 내지 ' + state.item.pages.length / 2 + '쪽'
+    : ' · 공개 내지 ' + state.item.pages.length + '쪽' : '';
   const file = fileMemory.get('interior');
   if (!file) return;
   showPreview(pdfImage, null, 'PDF 미리보기 만드는 중…');
@@ -372,12 +486,26 @@ async function updateBookPreviews() {
   try {
     pdf = await loadPDF(file);
     if (version !== previewVersion) return;
-    const pagesPerSheet = state.metadata['page-layout'] === 'spread' ? 2 : 1;
+    const mode = state.metadata['page-layout'];
+    const ratio = referencePageRatio(coverRatio);
+    const plan = await planPdfPages(pdf, mode, ratio, () => {
+      if (version !== previewVersion) throw new Error('미리보기가 변경되었습니다.');
+    });
     const page = await pdf.getPage(1);
-    const { blob } = await renderPDFPage(page, pagesPerSheet, 0, 480);
+    const { blob } = await renderPDFPage(page, plan.sheets[0], 0, 480);
     if (version === previewVersion) {
+      previewPageCount = plan.total;
+      updateMockup();
       showPreview(pdfImage, blob);
-      count.textContent = ' · 총 ' + pdf.numPages * pagesPerSheet + '쪽';
+      count.textContent = ' · ' + pdfLayoutLabels[plan.layout] + ' · PDF ' + pdf.numPages + '페이지 → 내지 ' + plan.total + '쪽';
+      if (mode !== 'auto') {
+        const suggested = sidesByShape(page.getViewport({ scale: 1 }), ratio);
+        if (suggested && suggested !== plan.sheets[0]) {
+          count.textContent += suggested === 1
+            ? ' · 첫 페이지는 낱장 비율입니다. 지금 선택하면 가운데가 잘립니다.'
+            : ' · 첫 페이지는 펼침면 비율입니다. 지금 선택하면 좌우가 한 쪽으로 저장됩니다.';
+        }
+      }
     }
   } catch (cause) {
     if (version === previewVersion) showPreview(pdfImage, null, errorMessage(cause));
@@ -596,27 +724,27 @@ async function prepareBook(signal) {
     if (state.files.interior) {
       const signature = state.files.interior.signature;
       const pageLayout = meta['page-layout'];
-      if (state.pdf?.signature !== signature || state.pdf.layout !== pageLayout) {
-        state.pdf = { signature, layout: pageLayout, pages: [], ratio: null, total: null };
+      const reference = pageLayout === 'auto' ? referencePageRatio(state.uploads.front?.ratio ?? state.item?.coverRatio) : undefined;
+      if (state.pdf?.signature !== signature || state.pdf.layout !== pageLayout || state.pdf.reference !== reference) {
+        state.pdf = { signature, layout: pageLayout, reference, pages: [], ratio: null, total: null };
         await persist();
       }
       if (!state.pdf.total || state.pdf.pages.length < state.pdf.total) {
         status.textContent = 'PDF 확인 중…';
         pdf = await loadPDF(getFile('interior'));
-        const pagesPerSheet = pageLayout === 'spread' ? 2 : 1;
-        state.pdf.total = pdf.numPages * pagesPerSheet;
-        if (state.pdf.total > pageLimit) throw new Error('내지는 ' + pageLimit + '쪽까지 등록할 수 있습니다.');
+        const plan = state.pdf.plan ?? await planPdfPages(pdf, pageLayout, reference, () => checkpointStop(signal));
+        state.pdf.plan = plan;
+        state.pdf.total = plan.total;
         await persist();
-        while (state.pdf.pages.length < state.pdf.total) {
+        for (const sheet of remainingPdfPages(plan.sheets, state.pdf.pages.length)) {
           checkpointStop(signal);
-          const sheet = Math.floor(state.pdf.pages.length / pagesPerSheet) + 1;
-          const page = await pdf.getPage(sheet);
+          const page = await pdf.getPage(sheet.number);
           try {
-            for (let side = state.pdf.pages.length % pagesPerSheet; side < pagesPerSheet; side++) {
+            for (let side = sheet.startSide; side < sheet.count; side++) {
               checkpointStop(signal);
               const current = state.pdf.pages.length + 1;
               changeProgress(state.pdf.total + 1, current - 1, '내지 저장 중 · ' + current + ' / ' + state.pdf.total + '쪽');
-              const { blob, ratio } = await renderPDFPage(page, pagesPerSheet, side, 2000);
+              const { blob, ratio } = await renderPDFPage(page, sheet.count, side, 2000);
               const asset = await uploadImage(blob, signal, waitingMessage);
               state.pdf.pages.push(asset);
               state.pdf.ratio ??= ratio;
@@ -640,7 +768,14 @@ async function prepareBook(signal) {
   return {
     ...commonPayload(),
     language: meta.language?.trim() || '',
-    bindingType: meta['binding-type'],
+    bindingType: meta['binding-type'], mockupView: meta['mockup-view'],
+    mockupDetails: meta.mockupDetails,
+    caseColor: meta['auto-case-color'] ? null : meta['case-color'],
+    paperColor: meta['auto-paper-color'] ? null : meta['paper-color'],
+    pageJumpEnabled: meta['page-jump'], resumeReadingEnabled: meta['resume-reading'],
+    firstPageSide: meta['first-page-side'] || null,
+    ...(assets.pages ? { pdfLayout: state.pdf.plan?.layout ?? state.pdf.layout } : { joinSplitPages: Boolean(meta['join-split']) }),
+    ...(assets.pages && state.pdf.plan?.layout === 'mixed' && { pdfSheetSides: state.pdf.plan.sheets }),
     trimSizeMm,
     spineWidthMm: meta['spine-width'] ? Number(meta['spine-width']) : inferredSpineWidth ?? null,
     pageRatio: state.pdf?.ratio ?? state.item?.pageRatio,
@@ -660,7 +795,7 @@ async function prepareProject(signal) {
 }
 
 async function prepareImages(signal, entries, thumbnail = false) {
-  if (entries.length > pageLimit) throw new Error('프로젝트 이미지는 1,000장까지 등록할 수 있습니다.');
+  if (entries.length > maxProjectImages) throw new Error('프로젝트 이미지는 1,000장까지 등록할 수 있습니다.');
   const images = [];
   for (let index = 0; index < entries.length; index++) {
     checkpointStop(signal);
@@ -756,7 +891,9 @@ async function clearEditor() {
 }
 
 function hasWorkDraft() {
-  return state.item || state.kind !== 'book' || state.tagsTouched || !state.metadata.published ||
+  return state.item || state.kind !== 'book' || state.tagsTouched ||
+    mockupControls.hasChanges(state.metadata.mockupDetails) ||
+    checkboxFields.some(id => Boolean(state.metadata[id]) !== Boolean(metadataDefaults[id])) ||
     Object.keys(state.files).length || metadataFields.some(id =>
       (state.metadata[id] ?? '') !== (metadataDefaults[id] ?? ''));
 }
@@ -778,6 +915,7 @@ async function editItem(item) {
     state.item = structuredClone(item);
     state.tagIds = idsFor(item, item.kind, projectTags);
     state.metadata = {
+      ...bookPreferences(item),
       title: item.title,
       description: Array.isArray(item.description) ? item.description.join('\n\n') : item.description || '',
       category: item.category || '',
@@ -793,7 +931,9 @@ async function editItem(item) {
       'trim-height': item.trimSizeMm?.[1] || '',
       'spine-width': item.spineWidthMm || '',
       'binding-type': item.bindingType || 'paperback',
-      'page-layout': 'single',
+      'page-layout': ['single', 'spread'].includes(item.pdfLayout) ? item.pdfLayout : 'auto',
+      'first-page-side': item.firstPageSide ?? '',
+      'join-split': item.joinSplitPages === true,
     };
     state.images = (item.images || []).map(image => ({ ...image, id: crypto.randomUUID() }));
     state.galleryImages = (item.galleryImages || []).map(image => ({ ...image, id: crypto.randomUUID() }));
@@ -1005,6 +1145,9 @@ async function initialize() {
   state = saved?.version === 2 ? saved : emptyDraft();
   state.galleryImages ||= [];
   state.galleryDirty ||= false;
+  state.metadata = { ...bookPreferences(state.item), ...state.metadata };
+  state.metadata['first-page-side'] ??= state.item?.firstPageSide ?? '';
+  state.metadata['join-split'] ??= !state.files.interior && state.item?.joinSplitPages === true;
   const english = state.item?.translations?.en || {};
   state.metadata['title-en'] ??= english.title || '';
   state.metadata['description-en'] ??= Array.isArray(english.description) ? english.description.join('\n\n') : english.description || '';

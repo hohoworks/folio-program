@@ -43,6 +43,8 @@ export function catalogAssets(catalog) {
     if (book.coverImages.back) requireImage(book.coverImages.back, book.title);
     if (book.coverImages.spine) requireImage(book.coverImages.spine, book.title);
     if (!Array.isArray(book.pages) || !book.pages.length) throw new Error('내지가 비어 있습니다. ' + book.title);
+    if (book.firstPageSide != null && !['left', 'right'].includes(book.firstPageSide)) throw new Error('첫 페이지 위치를 확인해주세요. ' + book.title);
+    if (book.joinSplitPages === true && book.pages.length % 2) throw new Error('반쪽 이미지를 합치려면 짝이 모두 있어야 합니다. ' + book.title);
     for (const page of book.pages) requireImage(page?.imageSrc, book.title);
     if (book.galleryImages != null && !Array.isArray(book.galleryImages)) throw new Error('책의 프로젝트 이미지 목록을 확인해주세요. ' + book.title);
     for (const picture of book.galleryImages || []) requireImage(picture?.imageSrc, book.title);

@@ -31,7 +31,7 @@ if (privateState === adminAssets || privateState.startsWith(adminAssets + sep)) 
 const mime = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
-  '.wasm': 'application/wasm', '.ico': 'image/x-icon',
+  '.webp': 'image/webp', '.wasm': 'application/wasm', '.ico': 'image/x-icon',
 };
 const env = {
   ADMIN_CODE: process.env.ADMIN_CODE,

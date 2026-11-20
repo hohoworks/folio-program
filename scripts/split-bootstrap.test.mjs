@@ -39,7 +39,9 @@ test('private checkout builds with the pinned public program without sending cre
   for (const name of (await readdir(new URL('dist/', repo))).filter(name => /\.(?:html|css|js)$/.test(name) || name === '_headers')) {
     await cp(new URL('dist/' + name, repo), join(source, 'dist', name));
   }
-  await cp(new URL('dist/assets/folio.svg', repo), join(source, 'dist/assets/folio.svg'));
+  for (const asset of ['folio.svg', 'sewn-signatures.webp', 'fonts']) {
+    await cp(new URL('dist/assets/' + asset, repo), join(source, 'dist/assets', asset), { recursive: true });
+  }
   for (const name of ['build-public.mjs', 'check-site.mjs']) {
     await cp(new URL('scripts/' + name, repo), join(source, 'scripts', name));
   }

@@ -3,6 +3,7 @@ import test from 'node:test';
 import worker from './worker.mjs';
 import { STOCK_PROJECT_TAGS } from '../dist/project-tags.js';
 import { DEFAULT_SITE_TITLE } from '../dist/site-title.js';
+import { planPdfPages, remainingPdfPages } from './public/pdf-layout.js';
 
 const origin = 'https://admin.folio.example';
 const code = crypto.randomUUID() + crypto.randomUUID();
@@ -451,6 +452,132 @@ function assetPaths(item) {
     ...(item.images || []).map(image => image.imageSrc)].filter(Boolean).map(path => 'dist/' + path);
 }
 
+test('PDF auto layout uses the trim aspect for each rotated viewport and only resumes missing sides', async () => {
+  const file = widths => ({
+    numPages: widths.length,
+    async getPage(n) { return { getViewport: () => ({ width: widths[n - 1], height: 200 }), cleanup() {} }; },
+  });
+  const mixed = await planPdfPages(file([140, 280, 280, 140]), 'auto', 0.7);
+  assert.deepEqual(mixed, { sheets: [1, 2, 2, 1], total: 6, layout: 'mixed' });
+  assert.deepEqual([...remainingPdfPages(mixed.sheets, 2)], [
+    { number: 2, count: 2, startSide: 1 }, { number: 3, count: 2, startSide: 0 }, { number: 4, count: 1, startSide: 0 },
+  ]);
+  assert.equal((await planPdfPages(file([280, 280]), 'auto', 1.4)).layout, 'single');
+  assert.equal((await planPdfPages(file([280, 280]), 'auto', 0.7)).layout, 'spread');
+  await assert.rejects(planPdfPages(file([200]), 'auto', 0.7), /직접 선택/);
+  await assert.rejects(planPdfPages(file([200]), 'auto', null), /재단 크기/);
+  assert.equal((await planPdfPages(file([200]), 'single')).total, 1);
+  assert.equal((await planPdfPages(file([200]), 'spread')).total, 2);
+  await assert.rejects(planPdfPages({ numPages: 501 }, 'spread'), /1,000/);
+});
+
+test('legacy half-page repair is explicit, reversible and cleared on PDF replacement; imported layout survives edits', async t => {
+  const book = { ...legacyBook, pages: [...legacyBook.pages, { imageSrc: 'assets/books/legacy/page-0002.webp' }] };
+  const state = repository(t, { books: [book] }, assetPaths(book));
+  const cookie = await session();
+  const edit = extra => request('/api/books', { method: 'POST', cookie, body: {
+    id: book.id, registrationId: crypto.randomUUID(), baseRevision: state.catalog.books[0].revision ?? null, ...extra,
+  } });
+  assert.equal((await edit({ pdfLayout: 'spread' })).status, 400);
+  assert.equal((await edit({ joinSplitPages: 'yes' })).status, 400);
+  assert.equal((await edit({ joinSplitPages: true })).status, 200);
+  assert.equal((await edit({ title: '복원 유지' })).status, 200);
+  assert.equal(state.catalog.books[0].joinSplitPages, true);
+  assert.deepEqual(state.catalog.books[0].pages, book.pages);
+  assert.equal((await edit({ joinSplitPages: false })).status, 200);
+  assert.equal(state.catalog.books[0].joinSplitPages, undefined);
+  assert.equal((await edit({ joinSplitPages: true })).status, 200);
+  assert.equal((await edit({ pdfLayout: 'spread', assets: { pages: [imageFile] } })).status, 400);
+  assert.equal((await edit({ pdfLayout: 'single', assets: { pages: [imageFile] } })).status, 200);
+  assert.equal(state.catalog.books[0].joinSplitPages, undefined);
+  assert.equal((await edit({ title: '재편집' })).status, 200);
+  assert.equal(state.catalog.books[0].pdfLayout, 'single');
+  assert.equal((await edit({ joinSplitPages: true })).status, 400);
+  const mixedPages = { pages: [imageFile, imageFile, imageFile, imageFile] };
+  for (const sides of [undefined, [1, 2], [1, 1, 1, 1], [2, 2], [1, 2, 3]]) {
+    assert.equal((await edit({ pdfLayout: 'mixed', pdfSheetSides: sides, assets: mixedPages })).status, 400);
+  }
+  assert.equal((await edit({ pdfLayout: 'mixed', pdfSheetSides: [1, 2, 1], assets: mixedPages })).status, 200);
+  assert.equal((await edit({ title: '혼합 유지' })).status, 200);
+  assert.deepEqual(state.catalog.books[0].pdfSheetSides, [1, 2, 1]);
+  assert.equal((await edit({ pdfLayout: 'spread', assets: mixedPages })).status, 200);
+  assert.equal(state.catalog.books[0].pdfSheetSides, undefined);
+});
+
+test('first page side can be edited without re-uploading a repaired book or changing its page files', async t => {
+  const book = { ...legacyBook, joinSplitPages: true, pages: [
+    ...legacyBook.pages, { imageSrc: 'assets/books/legacy/page-0002.webp' },
+  ] };
+  const state = repository(t, { books: [book] }, assetPaths(book));
+  const cookie = await session();
+  const edit = extra => request('/api/books', { method: 'POST', cookie, body: {
+    id: book.id, registrationId: crypto.randomUUID(), baseRevision: state.catalog.books[0].revision ?? null, ...extra,
+  } });
+  assert.equal((await edit({ title: '기존 배치' })).status, 200);
+  assert.equal(state.catalog.books[0].firstPageSide, undefined);
+  assert.equal((await edit({ firstPageSide: 'right' })).status, 200);
+  assert.equal((await edit({ title: '우수 시작' })).status, 200);
+  assert.equal(state.catalog.books[0].firstPageSide, 'right');
+  assert.equal(state.catalog.books[0].joinSplitPages, true);
+  assert.deepEqual(state.catalog.books[0].pages, book.pages);
+  assert.equal((await edit({ firstPageSide: 'bad' })).status, 400);
+  assert.equal((await edit({ baseRevision: null, firstPageSide: 'left' })).status, 409);
+  assert.equal(state.catalog.books[0].firstPageSide, 'right');
+  assert.equal((await edit({ assets: { pages: [imageFile] }, pdfLayout: 'single' })).status, 200);
+  assert.equal(state.catalog.books[0].firstPageSide, 'right');
+  assert.equal((await edit({ firstPageSide: 'left' })).status, 200);
+  assert.equal(state.catalog.books[0].firstPageSide, 'left');
+  assert.equal((await edit({ firstPageSide: null })).status, 200);
+  assert.equal(Object.hasOwn(state.catalog.books[0], 'firstPageSide'), false);
+});
+
+test('mockup and reading controls can be changed independently of uploaded book files', async t => {
+  const state = repository(t, { books: [legacyBook] }, assetPaths(legacyBook));
+  const cookie = await session();
+  const edit = extra => request('/api/books', { method: 'POST', cookie, body: {
+    id: legacyBook.id, registrationId: crypto.randomUUID(), baseRevision: state.catalog.books[0].revision ?? null, ...extra,
+  } });
+  for (const invalid of [{ pageJumpEnabled: '0' }, { resumeReadingEnabled: 1 }, { caseColor: 'red' }, { paperColor: '#fff' }, { mockupView: 'constructor' }]) {
+    assert.equal((await edit(invalid)).status, 400);
+  }
+  const options = { mockupView: 'edge', pageJumpEnabled: false, resumeReadingEnabled: false, caseColor: '#663311', paperColor: '#ffeeaa' };
+  assert.equal((await edit(options)).status, 200);
+  assert.equal((await edit({ title: '목업 수정' })).status, 200);
+  for (const [key, value] of Object.entries(options)) assert.equal(state.catalog.books[0][key], value);
+  assert.equal((await edit({ resumeReadingEnabled: true, caseColor: null, paperColor: null })).status, 200);
+  assert.equal(state.catalog.books[0].caseColor, undefined);
+  assert.equal(state.catalog.books[0].paperColor, undefined);
+  assert.equal(state.catalog.books[0].resumeReadingEnabled, true);
+  assert.equal(state.catalog.books[0].pageJumpEnabled, false);
+  assert.deepEqual(state.catalog.books[0].pages, legacyBook.pages);
+  assert.deepEqual(state.catalog.books[0].coverImages, legacyBook.coverImages);
+});
+
+test('book finishing settings survive partial updates and can be reset without uploading files', async t => {
+  const state = repository(t, { books: [legacyBook] }, assetPaths(legacyBook));
+  const cookie = await session();
+  const edit = extra => request('/api/books', { method: 'POST', cookie, body: {
+    id: legacyBook.id, registrationId: crypto.randomUUID(), baseRevision: state.catalog.books[0].revision ?? null, ...extra,
+  } });
+  const options = { spineShape: 'round', boardThicknessMm: 2.5, stapleCount: 4, ribbonEnabled: true,
+    headbandEnabled: true, ribbonColor: '#cc6677', coverGloss: 70 };
+  assert.equal((await edit({ bindingType: 'hardcover', mockupDetails: options })).status, 200);
+  for (const invalid of [{ coverGloss: 101 }, { threadColor: 'red' }, { stapleCount: 3.2 }, { ribbonEnabled: 1 },
+    { spineShape: 'constructor' }, { unrecognized: 4 }, [], '3']) {
+    assert.equal((await edit({ mockupDetails: invalid })).status, 400);
+    assert.deepEqual(state.catalog.books[0].mockupDetails, options);
+  }
+  assert.equal((await edit({ mockupDetails: { boardThicknessMm: null, ribbonColor: '#BB4466' } })).status, 200);
+  const expected = { ...options, ribbonColor: '#bb4466' };
+  delete expected.boardThicknessMm;
+  assert.equal((await edit({ bindingType: 'saddle-stitch' })).status, 200);
+  assert.deepEqual(state.catalog.books[0].mockupDetails, expected);
+  assert.equal((await edit({ mockupDetails: null })).status, 200);
+  assert.equal(Object.hasOwn(state.catalog.books[0], 'mockupDetails'), false);
+  assert.deepEqual(state.catalog.books[0].pages, legacyBook.pages);
+  assert.deepEqual(state.catalog.books[0].coverImages, legacyBook.coverImages);
+});
+
 test('legacy book edits preserve omitted data, remove owned obsolete files, reject stale revisions and replay safely', async t => {
   const orphan = 'dist/assets/books/legacy/old-orphan.png';
   const unrelated = 'dist/assets/projects/elsewhere/image.webp';
@@ -723,12 +850,13 @@ test('baseOrder rejects stale clients while a successful order replay remains id
 
 test('admin modules, method restrictions and nested input validation keep protected actions gated', async t => {
   repository(t, { books: [legacyBook] }, assetPaths(legacyBook));
-  for (const path of ['/site-settings.js', '/draft-store.js', '/upload-request.js', '/image-encoding.js', '/admin.js', '/vendor/pdfjs/pdf.mjs']) {
+  for (const path of ['/site-settings.js', '/draft-store.js', '/upload-request.js', '/image-encoding.js', '/pdf-layout.js', '/admin.js', '/vendor/pdfjs/pdf.mjs']) {
     assert.equal((await request(path)).status, 401);
   }
   const cookie = await session();
   assert.equal(await (await request('/site-settings.js', { cookie })).text(), '/site-settings.js');
   assert.equal(await (await request('/image-encoding.js', { cookie })).text(), '/image-encoding.js');
+  assert.equal(await (await request('/pdf-layout.js', { cookie })).text(), '/pdf-layout.js');
   const badMethod = await request('/api/site', { method: 'PUT', cookie });
   assert.equal(badMethod.status, 405);
   assert.equal(badMethod.headers.get('Allow'), 'POST');

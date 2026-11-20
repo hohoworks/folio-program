@@ -26,7 +26,15 @@
       <a href="#contact">연락처</a>
     </nav>
     <div id="language-switch" class="language-switch">
-      <button id="language-toggle" type="button" data-locale="en" lang="en" aria-label="Switch to English"><span id="language-name">(ENG)</span></button>
+      <button id="language-toggle" type="button">
+        <span class="sr-only" lang="en">Switch to English</span>
+        <span class="sr-only" lang="ko">한국어로 전환</span>
+        <span class="language-label" aria-hidden="true">
+          <svg viewBox="0 0 5 16" focusable="false"><path d="M4.25 1Q-1.5 8 4.25 15"/></svg>
+          <span lang="en">ENG</span><span lang="ko">한글</span>
+          <svg viewBox="0 0 5 16" focusable="false"><path d="M.75 1Q6.5 8 .75 15"/></svg>
+        </span>
+      </button>
     </div>
     </div>
   </header>
@@ -108,6 +116,8 @@
                     <div class="face fore"></div>
                     <div class="face head"></div>
                     <div class="face tail"></div>
+                    <div class="case-board front-board"><i class="board-head"></i><i class="board-tail"></i></div>
+                    <div class="case-board back-board"><i class="board-head"></i><i class="board-tail"></i></div>
                   </div>
                 </div>
               </div>
@@ -130,13 +140,23 @@
           <nav id="book-tags" class="work-tags" aria-label="분류와 연도"></nav>
           <div id="book-description" class="book-description"></div>
           <p id="book-metadata" class="book-metadata"></p>
-          <button id="read-book" class="read-book" type="button">읽기 <span aria-hidden="true">→</span></button>
+          <div class="book-reading-actions">
+            <button id="resume-book" class="read-book" type="button" hidden></button>
+            <button id="read-book" class="read-book" type="button">읽기 <span aria-hidden="true">→</span></button>
+          </div>
         </aside>
       </div>
       <nav class="page-navigation" aria-label="책 탐색">
         <button id="prev" type="button" hidden>← 표지</button>
         <output id="position" for="prev next" aria-live="polite"><span>표지</span><span class="position-total">/ 10</span></output>
+        <form id="page-jump" novalidate hidden>
+          <label for="page-number" class="sr-only">이동할 쪽수</label>
+          <input id="page-number" type="text" inputmode="numeric" enterkeyhint="go" autocomplete="off" aria-describedby="page-total">
+          <span id="page-total"></span>
+          <button id="jump-submit" type="submit">이동</button>
+        </form>
         <button id="next" type="button">다음 →</button>
+        <span id="page-error" role="alert"></span>
       </nav>
     </section>
   </main>

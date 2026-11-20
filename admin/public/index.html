@@ -21,7 +21,7 @@
     <section class="catalogue" aria-labelledby="catalogue-heading">
       <header class="section-header heading-row"><h2 id="catalogue-heading" tabindex="-1">작업 목록</h2><button type="button" class="primary" id="new-item" disabled>작업 추가 +</button></header>
       <div class="catalogue-filters">
-        <label for="catalog-search" class="visually-hidden">작업 검색</label><input type="search" id="catalog-search" placeholder="제목·세부 분류 검색">
+        <label for="catalog-search" class="visually-hidden">작업 검색</label><input type="search" id="catalog-search" placeholder="제목·작업 형식 검색">
         <label for="catalog-kind" class="visually-hidden">작업 유형</label><select id="catalog-kind"><option value="">모든 유형</option><option value="book">책</option><option value="project">프로젝트</option></select>
         <label for="catalog-tag" class="visually-hidden">프로젝트 태그</label><select id="catalog-tag"><option value="">모든 태그</option></select>
         <label for="catalog-year" class="visually-hidden">작업 연도</label><select id="catalog-year"><option value="">모든 연도</option></select>
@@ -44,14 +44,17 @@
               <div>
                 <label for="title">국문 제목</label><input id="title" name="title" type="text" maxlength="160" required>
                 <label for="description">국문 소개 <span>선택</span></label><textarea id="description" name="description" rows="5" maxlength="6000"></textarea>
-                <label for="category">세부 분류 · 국문 <span>선택</span></label><input id="category" name="category" type="text" maxlength="100">
               </div>
               <div>
                 <label for="title-en">영문 제목 <span>선택</span></label><input id="title-en" name="title-en" type="text" lang="en" maxlength="160">
                 <label for="description-en">영문 소개 <span>선택</span></label><textarea id="description-en" name="description-en" lang="en" rows="5" maxlength="6000"></textarea>
-                <label for="category-en">세부 분류 · 영문 <span>선택</span></label><input id="category-en" name="category-en" type="text" lang="en" maxlength="100">
               </div>
             </div>
+            <div class="language-fields">
+              <div><label for="category">작업 형식 · 국문 표기 <span>선택</span></label><input id="category" name="category" type="text" maxlength="100" placeholder="사진 에세이" aria-describedby="work-format-help"></div>
+              <div><label for="category-en">작업 형식 · 영문 표기 <span>선택</span></label><input id="category-en" name="category-en" type="text" lang="en" maxlength="100" placeholder="Photo essay" aria-describedby="work-format-help"></div>
+            </div>
+            <p class="help metadata-hint" id="work-format-help">작업 상세에 표시할 형식을 짧게 적어주세요. 전시 도록, 포스터처럼 자유롭게 적거나 비워 두세요. 작업 목록의 분류 필터는 아래 ‘프로젝트 태그’에서 고릅니다.</p>
             <label for="year">연도 <span>선택</span></label><input id="year" name="year" type="text" maxlength="40">
             <fieldset class="tag-selection" aria-labelledby="work-tags-heading">
               <legend id="work-tags-heading">프로젝트 태그 <span>복수 선택</span></legend>
@@ -63,9 +66,13 @@
             <section class="form-section" aria-labelledby="book-heading">
               <h2 id="book-heading">책 정보</h2>
               <div class="fields two">
-                <div><label for="language">내지 언어 · 국문 <span>선택</span></label><input id="language" name="language" type="text" maxlength="60"></div>
-                <div><label for="language-en">내지 언어 · 영문 <span>선택</span></label><input id="language-en" name="language-en" type="text" lang="en" maxlength="60"></div>
+                <div><label for="language">책 본문 언어 · 국문 표기 <span>선택</span></label><input id="language" name="language" type="text" maxlength="60" placeholder="한국어·영어" aria-describedby="book-language-help"></div>
+                <div><label for="language-en">책 본문 언어 · 영문 표기 <span>선택</span></label><input id="language-en" name="language-en" type="text" lang="en" maxlength="60" placeholder="Korean and English" aria-describedby="book-language-help"></div>
               </div>
+              <p class="help" id="book-language-help">책 안에 실제로 쓰인 언어를 적어주세요. 한국어로만 쓴 책은 국문 칸에 ‘한국어’, 영문 칸에 ‘Korean’을 적으면 각 언어 화면에서 쪽수 옆에 표시됩니다. 글이 없는 책은 비워 두세요.</p>
+            </section>
+            <section class="form-section mockup-section" aria-labelledby="mockup-heading">
+              <h2 id="mockup-heading">책 목업</h2>
               <div class="fields three">
                 <div><label for="trim-width">재단 가로 (mm) <span>선택</span></label><input id="trim-width" name="trim-width" type="number" min="1" step="any" inputmode="decimal"></div>
                 <div><label for="trim-height">재단 세로 (mm) <span>선택</span></label><input id="trim-height" name="trim-height" type="number" min="1" step="any" inputmode="decimal"></div>
@@ -75,6 +82,58 @@
               <select id="binding-type" name="binding-type" aria-describedby="binding-help">
                 <option value="paperback">무선 제본</option><option value="hardcover">양장</option><option value="saddle-stitch">중철</option><option value="exposed-sewn">노출사철</option>
               </select>
+              <label for="mockup-view">처음 보이는 각도</label>
+              <select id="mockup-view"><option value="spine">앞표지와 책등</option><option value="edge">앞표지와 책배</option><option value="back">뒤표지와 책등</option><option value="front">앞표지 정면</option></select>
+              <div class="fields two material-colors">
+                <div><label for="case-color">표지 바탕색</label><input type="color" id="case-color" value="#b3a897"><label class="check-label"><input id="auto-case-color" type="checkbox" checked> 앞표지에서 추출</label></div>
+                <div><label for="paper-color">종이 단면색</label><input type="color" id="paper-color" value="#efede4"><label class="check-label"><input id="auto-paper-color" type="checkbox" checked> 기본 종이색</label></div>
+              </div>
+              <div class="mockup-adjustments">
+                <details id="mockup-details">
+                  <summary>표지 마감과 제본 세부 설정</summary>
+                  <fieldset class="mockup-group">
+                    <legend>표지 마감</legend>
+                    <div class="fields two">
+                      <div><label for="corner-radius-mm">모서리 둥글기 (mm)</label><input id="corner-radius-mm" type="number" step="any" inputmode="decimal"></div>
+                      <div><label for="cover-gloss">표지 광택 (%)</label><input id="cover-gloss" type="number" step="any" inputmode="decimal" aria-describedby="gloss-help"><p id="gloss-help" class="help">0%는 무광입니다.</p></div>
+                    </div>
+                  </fieldset>
+                  <fieldset class="mockup-group" data-bindings="hardcover" hidden disabled>
+                    <legend>양장 표지와 책등</legend>
+                    <div class="fields two">
+                      <div><label for="board-thickness-mm">표지 보드 두께 (mm)</label><input id="board-thickness-mm" type="number" step="any" inputmode="decimal" placeholder="자동"></div>
+                      <div><label for="groove-width-mm">책등 홈 너비 (mm)</label><input id="groove-width-mm" type="number" step="any" inputmode="decimal" placeholder="자동"></div>
+                      <div><label for="spine-shape">책등 모양</label><select id="spine-shape"><option value="square">각진 책등</option><option value="round">둥근 책등</option></select></div>
+                      <div class="material-colors"><label for="endpaper-color">면지 색</label><input id="endpaper-color" type="color" value="#efede4"><label class="check-label"><input id="auto-endpaper-color" type="checkbox" checked> 자동</label></div>
+                    </div>
+                    <label class="check-label"><input id="headband-enabled" type="checkbox" aria-controls="headband-material"> 헤드밴드(꽃천) 추가</label>
+                    <fieldset id="headband-material" class="fields two material-colors" data-enabled-by="headband-enabled" hidden disabled aria-label="꽃천 색">
+                      <div><label for="headband-color">꽃천 바탕색</label><input id="headband-color" type="color"></div>
+                      <div><label for="headband-accent-color">꽃천 줄무늬 색</label><input id="headband-accent-color" type="color"></div>
+                    </fieldset>
+                    <label class="check-label"><input id="ribbon-enabled" type="checkbox" aria-controls="ribbon-material"> 가름끈 추가</label>
+                    <fieldset id="ribbon-material" class="fields two material-colors" data-enabled-by="ribbon-enabled" hidden disabled aria-label="가름끈 모양">
+                      <div><label for="ribbon-color">가름끈 색</label><input id="ribbon-color" type="color"></div>
+                      <div><label for="ribbon-length-mm">늘어진 길이 (mm)</label><input id="ribbon-length-mm" type="number" step="any" inputmode="decimal"></div>
+                      <div><label for="ribbon-angle">기울기 (°)</label><input id="ribbon-angle" type="number" step="any" inputmode="decimal"></div>
+                    </fieldset>
+                  </fieldset>
+                  <fieldset class="mockup-group" data-bindings="saddle-stitch" hidden disabled>
+                    <legend>중철 방식</legend>
+                    <label for="stitch-type">묶는 재료</label><select id="stitch-type"><option value="wire">철사</option><option value="thread">실</option></select>
+                    <fieldset class="fields two material-colors" data-stitch="wire" aria-label="철사 설정">
+                      <div><label for="staple-count">철심 개수</label><input id="staple-count" type="number" step="1" inputmode="numeric"></div>
+                      <div><label for="staple-thickness-mm">철사 굵기 (mm)</label><input id="staple-thickness-mm" type="number" step="any" inputmode="decimal"></div>
+                      <div><label for="staple-color">철사 색</label><input id="staple-color" type="color"></div>
+                    </fieldset>
+                  </fieldset>
+                  <fieldset class="mockup-group material-colors" data-bindings="exposed-sewn saddle-stitch" data-stitch="thread" hidden disabled>
+                    <legend>제본 실</legend>
+                    <label for="thread-color">실 색</label><input id="thread-color" type="color" value="#9b8261"><label class="check-label"><input id="auto-thread-color" type="checkbox" checked> 자동</label>
+                  </fieldset>
+                </details>
+                <div id="mockup-preview" role="img" aria-label="책 목업 미리보기"></div>
+              </div>
             </section>
             <section class="form-section" aria-labelledby="covers-heading">
               <h2 id="covers-heading">표지</h2>
@@ -86,15 +145,28 @@
               <h2 id="pdf-heading">내지</h2>
               <div class="file-field"><label for="interior">PDF 파일</label><input id="interior" type="file" accept="application/pdf,.pdf"><p class="help file-state" id="interior-state"></p></div>
               <label for="page-layout">PDF 페이지 구성</label>
-              <select id="page-layout" name="page-layout"><option value="single">한 쪽씩</option><option value="spread">두 쪽 펼침면</option></select>
-              <p class="help">펼침면은 왼쪽, 오른쪽 순으로 나눕니다. 내지는 읽기용 이미지로 저장됩니다.</p>
+              <select id="page-layout" name="page-layout" aria-describedby="page-layout-help"><option value="auto">자동 인식</option><option value="single">낱장 · 각 PDF 페이지를 한 쪽으로</option><option value="spread">펼침면 · 모든 PDF 페이지를 좌우 두 쪽으로</option></select>
+              <p class="help" id="page-layout-help"></p>
+              <label class="check-label" id="join-split-row" hidden><input id="join-split" type="checkbox"> 잘못 나뉜 반쪽 두 장을 원래 한 쪽으로 이어 붙이기</label>
+              <label for="first-page-side">첫 페이지 위치</label>
+              <select id="first-page-side" name="first-page-side" aria-describedby="first-page-side-help">
+                <option value="">기본 배치</option>
+                <option value="right">오른쪽(우수) · 왼쪽을 비우고 1쪽부터</option>
+                <option value="left">왼쪽(좌수) · 왼쪽에 1쪽부터</option>
+              </select>
+              <p class="help" id="first-page-side-help">첫 낱장이 놓일 위치를 선택하세요. PDF에서 이미 두 쪽이 한 펼침면으로 묶인 부분은 원래 좌우 배치를 유지합니다.</p>
+            </section>
+            <section class="form-section" aria-labelledby="reader-heading">
+              <h2 id="reader-heading">책 읽기</h2>
+              <label class="check-label"><input id="page-jump" type="checkbox" checked> 쪽수를 입력해 이동</label>
+              <label class="check-label"><input id="resume-reading" type="checkbox" checked> 마지막으로 읽은 쪽 기억</label>
             </section>
           </fieldset>
           <section class="form-section" id="book-previews" aria-labelledby="preview-heading">
             <h2 id="preview-heading">파일 미리보기</h2>
             <div class="previews">
               <figure><div class="preview-stage"><span>앞표지를 선택해주세요.</span><img id="cover-preview" alt="앞표지" hidden></div><figcaption>앞표지<span id="preview-binding"></span></figcaption></figure>
-              <figure><div class="preview-stage"><span>내지 PDF를 선택해주세요.</span><img id="pdf-preview" alt="내지 첫 페이지" hidden></div><figcaption>내지 첫 페이지<span id="preview-page-count"></span></figcaption></figure>
+              <figure><div class="preview-stage" id="pdf-preview-stage"><span>내지 PDF를 선택해주세요.</span><img id="pdf-preview" alt="내지 첫 페이지" hidden><img id="pdf-preview-right" alt="" hidden></div><figcaption>내지 첫 페이지<span id="preview-page-count" aria-live="polite"></span></figcaption></figure>
             </div>
           </section>
           <fieldset class="form-section" id="project-specific" aria-labelledby="project-heading">

@@ -1,4 +1,5 @@
-import { loadCatalog, spineRatio, trimSize } from './catalog.js';
+import { loadCatalog, readerSpreads, trimSize } from './catalog.js';
+import { setBookMaterial, mockupViews } from './book-material.js';
 import { createCurl } from './curl.js';
 import { createMobileReader } from './mobile-reader.js';
 import { createShelf } from './shelf.js';
@@ -10,11 +11,17 @@ const stage = $('stage');
 const orbit = $('orbit');
 const model = $('book-model');
 const modelFrame = $('model-frame');
+const modelShadow = stage.querySelector('.model-shadow');
 const container = $('current-page');
 const pageArea = $('page-area');
 const previousButton = $('prev');
 const nextButton = $('next');
 const positionDisplay = $('position');
+const jumpForm = $('page-jump');
+const jumpInput = $('page-number');
+const pageError = $('page-error');
+const readButton = $('read-book');
+const resumeButton = $('resume-book');
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
 const shelf = $('shelf');
 const library = $('library');
@@ -30,11 +37,11 @@ const projectList = $('project-list');
 const aboutView = $('about');
 const contactView = $('contact');
 const mobile = createMobileReader(document.querySelector('.reader-window'), updateNavigation);
-const initialRotation = { x: 9, y: -24 };
+const initialRotation = mockupViews.spine;
 const languageStorageKey = 'folio-language';
 const messages = {
   ko: {
-    home: '홈', menu: '주 메뉴', read: '읽기', cover: '표지',
+    home: '홈', menu: '주 메뉴', read: '읽기', startOver: '처음부터 읽기', pageNumber: '이동할 쪽수', jump: '이동', cover: '표지',
     previous: '← 이전', next: '다음 →', previousPage: '이전 쪽', nextPage: '다음 쪽',
     previousSpread: '이전 펼침면', nextSpread: '다음 펼침면', backCover: '표지로 돌아가기',
     backShelf: '← 책장', backProject: '← 목록으로 돌아가기', viewer: '책 뷰어', coverView: '3D 표지',
@@ -46,7 +53,7 @@ const messages = {
     noMatches: '조건에 맞는 작업이 없습니다.', workTags: '분류와 연도',
   },
   en: {
-    home: 'Home', menu: 'Main navigation', read: 'Read', cover: 'Cover',
+    home: 'Home', menu: 'Main navigation', read: 'Read', startOver: 'Read from the start', pageNumber: 'Page number', jump: 'Go', cover: 'Cover',
     previous: '← Previous', next: 'Next →', previousPage: 'Previous page', nextPage: 'Next page',
     previousSpread: 'Previous spread', nextSpread: 'Next spread', backCover: 'Back to cover',
     backShelf: '← Book shelf', backProject: '← Back to projects', viewer: 'Book viewer', coverView: '3D cover',
@@ -90,6 +97,8 @@ function pageCount(count) {
 let activeBook;
 let activeRoute;
 let pages = [];
+let spreads = [];
+let rememberedPage = 0;
 
 let position = 0;
 let spread;
@@ -126,12 +135,20 @@ function addAssetImage(parent, path, { lazy = false, alt = '', fallback } = {}) 
 }
 
 function preloadSpread(index) {
-  if (!activeBook.coverImages || index < 1) return;
-  for (const page of pages.slice(index - 1, index + 1)) {
-    const image = new Image();
-    image.fetchPriority = 'low';
-    image.src = assetURL(page.imageSrc);
+  const pair = spreads[index - 1];
+  if (!activeBook.coverImages || !pair) return;
+  for (const page of [pair.left, pair.right]) {
+    if (!page) continue;
+    for (const src of scanImages(pages[page - 1])) {
+      const image = new Image();
+      image.fetchPriority = 'low';
+      image.src = assetURL(src);
+    }
   }
+}
+
+function scanImages(page) {
+  return page.rightImageSrc ? [page.imageSrc, page.rightImageSrc] : [page.imageSrc];
 }
 
 let primedBook;
@@ -155,7 +172,8 @@ function createPage(index) {
     page.className = 'paper paper-scan';
     page.dataset.page = index;
     page.setAttribute('aria-label', pageLabel(index));
-    addAssetImage(page, data.imageSrc);
+    if (data.rightImageSrc) page.classList.add('joined-scan');
+    for (const src of scanImages(data)) addAssetImage(page, src);
     return page;
   }
   page.className = 'paper ' + (data.image ? 'photo' : 'text');
@@ -195,19 +213,21 @@ function formatPage(index) {
   return String(index).padStart(2, '0');
 }
 
-function spreadLabel(first) {
-  const last = Math.min(first + 1, pages.length);
-  return first === last ? formatPage(first) : `${formatPage(first)}–${formatPage(last)}`;
+function spreadLabel(index) {
+  const { left, right } = spreads[index - 1];
+  return left && right ? `${formatPage(left)}–${formatPage(right)}` : formatPage(left || right);
 }
 
 function createSpread(index) {
   const element = document.createElement('div');
-  const left = createPage(index);
-  const right = createPage(index + 1);
+  const pair = spreads[index - 1];
+  const left = createPage(pair.left);
+  const right = createPage(pair.right);
   element.className = 'spread';
   element.tabIndex = -1;
   element.setAttribute('role', 'group');
-  element.dataset.first = index;
+  element.dataset.first = pair.left || pair.right;
+  element.dataset.spreadIndex = index;
   element.setAttribute('aria-label', pageLabel(spreadLabel(index)));
   left.classList.add('paper-left');
   right.classList.add('paper-right');
@@ -217,9 +237,7 @@ function createSpread(index) {
 
 function targetFor(direction) {
   if (direction !== -1 && direction !== 1) return -1;
-  if (position === 0) return direction === 1 ? 1 : -1;
-  if (position === 1 && direction === -1) return 0;
-  return position + direction * 2;
+  return position + direction;
 }
 
 function clearTurn() {
@@ -234,51 +252,116 @@ function clearTurn() {
 
 function canPan(direction) {
   if (!mobile.active || position === 0) return false;
-  return direction === 1
-    ? mobile.pageSide === 'left' && position + 1 <= pages.length
-    : direction === -1 && mobile.pageSide === 'right';
+  const pair = spreads[position - 1];
+  return Boolean(pair.left && pair.right) && (direction === 1 ? mobile.pageSide === 'left' : mobile.pageSide === 'right');
+}
+
+function firstVisibleSide(index, forward) {
+  const pair = spreads[index - 1];
+  if (!pair || !pair.right) return 'left';
+  if (!pair.left) return 'right';
+  return forward ? 'left' : 'right';
+}
+
+function bookmarkKey(book) {
+  return 'hoho-reader:' + book.id;
+}
+
+function readBookmark(book) {
+  if (book.resumeReadingEnabled === false) return 0;
+  try {
+    const saved = JSON.parse(localStorage.getItem(bookmarkKey(book)));
+    const leaf = book.pages[saved?.page - 1];
+    if (Number.isInteger(saved?.page) && leaf && saved.total === book.pages.length &&
+        saved.image === leaf.imageSrc && saved.rightImage === leaf.rightImageSrc) return saved.page;
+  } catch { /* Reading works when storage is unavailable. */ }
+  return 0;
+}
+
+function rememberLeaf() {
+  if (!position || activeBook.resumeReadingEnabled === false) return;
+  const page = spreads[position - 1][mobile.pageSide];
+  if (rememberedPage === page) return;
+  rememberedPage = page;
+  const leaf = pages[page - 1];
+  try {
+    localStorage.setItem(bookmarkKey(activeBook), JSON.stringify({
+      page, total: pages.length, image: leaf.imageSrc, rightImage: leaf.rightImageSrc,
+    }));
+  } catch { /* Keep the reading position for this visit. */ }
 }
 
 function updateNavigation() {
   if (!activeBook) return;
   const cover = position === 0;
-  const onLeft = !mobile.active || mobile.pageSide === 'left';
-  const firstPage = position === 1 && onLeft;
+  const firstPage = position === 1 && !canPan(-1);
   previousButton.hidden = cover;
   previousButton.textContent = firstPage ? '← ' + t('cover') : t('previous');
   previousButton.setAttribute('aria-label', firstPage ? t('backCover') : t(mobile.active ? 'previousPage' : 'previousSpread'));
-  nextButton.disabled = !cover && !canPan(1) && targetFor(1) > pages.length;
+  nextButton.disabled = !cover && !canPan(1) && targetFor(1) > spreads.length;
   nextButton.textContent = t('next');
   nextButton.setAttribute('aria-label', t(mobile.active ? 'nextPage' : 'nextSpread'));
-  const label = mobile.active ? formatPage(position + (onLeft ? 0 : 1)) : spreadLabel(position);
-  positionDisplay.firstElementChild.textContent = cover ? t('cover') : label;
+  let label = t('cover');
+  if (!cover) label = mobile.active ? formatPage(spreads[position - 1][mobile.pageSide]) : spreadLabel(position);
+  positionDisplay.firstElementChild.textContent = label;
+  const editable = !cover && activeBook.pageJumpEnabled !== false;
+  positionDisplay.classList.toggle('sr-only', editable);
+  jumpForm.hidden = !editable;
+  if (editable && document.activeElement !== jumpInput) jumpInput.value = formatPage(spreads[position - 1][mobile.pageSide]);
+  if (cover) {
+    resumeButton.hidden = rememberedPage < 2;
+    resumeButton.textContent = locale === 'en' ? 'Resume at page ' + rememberedPage : rememberedPage + '쪽부터 이어 읽기';
+    readButton.firstChild.textContent = t(resumeButton.hidden ? 'read' : 'startOver') + ' ';
+  }
   $('turn-prev').hidden = cover;
   $('turn-next').hidden = nextButton.disabled;
 }
 
-function goTo(index, { focus = false } = {}) {
+function syncReaderViewport() {
+  const viewport = window.visualViewport;
+  if (!viewport || viewer.hidden || viewer.dataset.mode !== 'read') return;
+  const zoomed = viewport.scale > 1.01;
+  pageArea.toggleAttribute('data-zoomed', zoomed);
+  // Keep the page and its controls above the phone keyboard, including while it closes.
+  if (!zoomed && viewport.height < window.innerHeight - 1) {
+    viewer.style.setProperty('--reader-viewport-height', viewport.height + 'px');
+  } else if (!zoomed) {
+    viewer.style.removeProperty('--reader-viewport-height');
+  }
+}
+window.visualViewport?.addEventListener('resize', syncReaderViewport);
+
+function goTo(index, { focus = false, side } = {}) {
   clearTurn();
   gesture = undefined;
-  if (!Number.isInteger(index) || index < 0 || index > pages.length) return;
-  if (index === position) return;
+  if (!Number.isInteger(index) || index < 0 || index > spreads.length) return;
+  if (index === position && !side) return;
+  clearJumpError();
   stopCoverArrival();
   const active = document.activeElement;
   const focusPage = focus || container.contains(active);
-  const arrivingSide = mobile.active && index > 0 && index < position ? 'right' : 'left';
+  const arrivingSide = side ?? firstVisibleSide(index, index >= position || !mobile.active);
+  const changedSpread = index !== position;
   position = index;
   const cover = index === 0;
 
   stage.dataset.mode = viewer.dataset.mode = cover ? 'cover' : 'read';
   $('cover-view').hidden = !cover;
   $('reading-view').hidden = cover;
+  if (cover) viewer.style.removeProperty('--reader-viewport-height');
+  else syncReaderViewport();
 
-  spread = cover ? undefined : createSpread(index);
-  container.replaceChildren(...(spread ? [spread.element] : []));
-  if (!cover) {
-    preloadSpread(index + 2);
-    if (index > 1) preloadSpread(index - 2);
+  if (changedSpread) {
+    spread = cover ? undefined : createSpread(index);
+    container.replaceChildren(...(spread ? [spread.element] : []));
+    if (!cover) {
+      preloadSpread(index + 1);
+      preloadSpread(index - 1);
+    }
   }
   mobile.move(arrivingSide, { animate: false });
+  rememberLeaf();
+  if (side) jumpInput.value = formatPage(spreads[index - 1][side]);
   updateNavigation();
   if (focusPage || (cover && active === previousButton) || (nextButton.disabled && active === nextButton)) {
     (cover ? orbit : spread.element).focus({ preventScroll: true });
@@ -330,7 +413,7 @@ function settleTurn(current, commit) {
   const from = current.progress;
   const to = commit ? 1 : 0;
   const arrivingSide = commit && mobile.active && !current.opening && current.index > 0
-    ? current.forward ? 'left' : 'right'
+    ? firstVisibleSide(current.index, current.forward)
     : null;
   const duration = (current.opening ? 800 : 640) * Math.max(arrivingSide ? .57 : .37, Math.abs(to - from));
   const cameraStart = from >= .5 ? 0 : .46;
@@ -370,12 +453,14 @@ function step(direction) {
   if (canPan(direction)) {
     const moveFocus = document.activeElement === nextButton;
     mobile.move(direction === 1 ? 'right' : 'left');
+    clearJumpError();
+    rememberLeaf();
     updateNavigation();
     if (moveFocus && nextButton.disabled) spread.element.focus({ preventScroll: true });
     return;
   }
   const index = targetFor(direction);
-  if (index < 0 || index > pages.length) return;
+  if (index < 0 || index > spreads.length) return;
   if (position === 0) {
     openBook(index);
   } else if (reducedMotion.matches) {
@@ -387,17 +472,83 @@ function step(direction) {
   }
 }
 
-const readButton = $('read-book');
+function clearJumpError() {
+  pageError.textContent = '';
+  jumpInput.removeAttribute('aria-invalid');
+  jumpInput.setAttribute('aria-describedby', 'page-total');
+}
+
+function jumpToPage(page) {
+  const index = spreads.findIndex(pair => pair.left === page || pair.right === page);
+  if (index < 0) return;
+  const side = spreads[index].right === page ? 'right' : 'left';
+  goTo(index + 1, { side, focus: true });
+}
+
+jumpForm.addEventListener('submit', event => {
+  event.preventDefault();
+  if (jumpForm.hidden) return;
+  const value = jumpInput.value.trim().replace(/[０-９]/g, digit => String(digit.charCodeAt(0) - 0xFF10));
+  const page = Number(value);
+  if (!/^\d+$/.test(value) || page < 1 || page > pages.length) {
+    pageError.textContent = locale === 'en' ? 'Enter a page from 1 to ' + pages.length + '.' : '1부터 ' + pages.length + ' 사이의 쪽수를 입력하세요.';
+    jumpInput.setAttribute('aria-invalid', 'true');
+    jumpInput.setAttribute('aria-describedby', 'page-total page-error');
+    jumpInput.focus();
+    jumpInput.select();
+    return;
+  }
+  jumpToPage(page);
+});
+jumpInput.addEventListener('focus', () => jumpInput.select());
+jumpInput.addEventListener('input', clearJumpError);
+resumeButton.addEventListener('click', () => jumpToPage(rememberedPage));
 readButton.addEventListener('pointerenter', prepareFirstSpread);
 readButton.addEventListener('focus', prepareFirstSpread);
 readButton.addEventListener('click', () => step(1));
 previousButton.addEventListener('click', () => step(-1));
 nextButton.addEventListener('click', () => step(1));
 
+// Place the contact shadow under the lowest projected corner as the book turns.
+function positionBookShadow() {
+  const width = model.offsetWidth;
+  const height = model.offsetHeight;
+  if (!width || !height) return;
+  const depth = Math.max(1.5, Math.min(80, width * (Number(model.style.getPropertyValue('--spine-ratio')) || .025)));
+  const matrix = new DOMMatrix().rotateAxisAngle(1, 0, 0, rotation.x)
+    .rotateAxisAngle(0, 1, 0, rotation.y).rotateAxisAngle(0, 0, 1, -5);
+  const corners = [];
+  for (const x of [-width / 2, width / 2]) {
+    for (const y of [-height / 2, height / 2]) {
+      for (const z of [-depth / 2, depth / 2]) {
+        const point = matrix.transformPoint({ x, y, z });
+        const perspective = 1300 / (1300 - point.z);
+        corners.push({ x: point.x * perspective, y: point.y * perspective });
+      }
+    }
+  }
+  corners.sort((a, b) => b.y - a.y);
+  const lowest = corners[0];
+  const touching = corners.filter(point => lowest.y - point.y < 1.5);
+  const contactX = touching.reduce((sum, point) => sum + point.x, 0) / touching.length;
+  const screenX = corners.map(point => point.x);
+  modelShadow.style.setProperty('--contact-x', contactX + 'px');
+  modelShadow.style.setProperty('--contact-y', lowest.y + 'px');
+  modelShadow.style.setProperty('--footprint', (Math.max(...screenX) - Math.min(...screenX)) + 'px');
+}
+
+new ResizeObserver(positionBookShadow).observe(model);
+
 function setRotation(x, y) {
   rotation = { x: Math.min(77, Math.max(-77, x)), y };
   model.style.setProperty('--rx', `${rotation.x}deg`);
   model.style.setProperty('--ry', `${rotation.y}deg`);
+  const pitch = rotation.x * Math.PI / 180;
+  const yaw = rotation.y * Math.PI / 180;
+  const light = .6 * Math.cos(yaw) * Math.cos(pitch) - .5 * Math.sin(yaw);
+  model.style.setProperty('--front-shade', Math.max(0, (.55 - light) * .12));
+  model.style.setProperty('--back-shade', Math.max(0, (.55 + light) * .12));
+  positionBookShadow();
 }
 
 orbit.addEventListener('pointerdown', (event) => {
@@ -428,6 +579,12 @@ orbit.addEventListener('keydown', (event) => {
 });
 
 pageArea.addEventListener('pointerdown', (event) => {
+  if (event.pointerType === 'touch' && !event.isPrimary && gesture) {
+    // Release a partial drag when a second finger begins a pinch.
+    gesture = undefined;
+    clearTurn();
+  }
+  if (event.pointerType === 'touch' && pageArea.hasAttribute('data-zoomed')) return;
   if (turn || gesture || mobile.moving || !event.isPrimary || event.button !== 0) return;
   const box = pageArea.getBoundingClientRect();
   const edge = event.target.closest('.drag-zone');
@@ -455,7 +612,7 @@ pageArea.addEventListener('pointermove', (event) => {
   }
   if (canPan(gesture.direction)) return;
   const index = targetFor(gesture.direction);
-  if (index < 0 || index > pages.length || reducedMotion.matches) return;
+  if (index < 0 || index > spreads.length || reducedMotion.matches) return;
   const pull = -dx * gesture.direction;
   if (!turn && pull < 2) return;
   if (!turn) startTurn(index, gesture.corner);
@@ -482,6 +639,7 @@ pageArea.addEventListener('lostpointercapture', (event) => endGesture(event, tru
 
 document.addEventListener('keydown', (event) => {
   if (!activeBook || event.defaultPrevented) return;
+  if (event.target === jumpInput) return;
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault();
@@ -984,9 +1142,9 @@ function updateBookText(book) {
   metadata.replaceChildren();
   if (content.category) {
     appendText(metadata, 'span', 'work-category', content.category).lang = titleLanguage(content.category);
-    metadata.append(' · ');
+    metadata.append(', ');
   }
-  metadata.append([pageCount(book.pages.length), language].filter(Boolean).join(' · '));
+  metadata.append([pageCount(book.pages.length), language].filter(Boolean).join(', '));
   description.textContent = book.coverImages ? content.description.join('\n\n') : content.description[0];
   description.lang = titleLanguage(description.textContent);
   orbit.setAttribute('aria-label', content.title + ' ' + t('coverView'));
@@ -1007,11 +1165,6 @@ function refreshLocale() {
   $('projects-title').lang = locale;
   $('library-title').textContent = t('bookshelf');
   $('library-title').lang = locale;
-  const toggle = $('language-toggle');
-  toggle.dataset.locale = locale === 'ko' ? 'en' : 'ko';
-  $('language-name').textContent = locale === 'ko' ? '(ENG)' : '(한글)';
-  toggle.lang = locale === 'ko' ? 'en' : 'ko';
-  toggle.setAttribute('aria-label', locale === 'ko' ? 'Switch to English' : '한국어로 전환');
   const aboutLayout = aboutView.querySelector('.about-layout');
   aboutLayout.prepend(aboutLayout.querySelector('.intro-column[lang="' + locale + '"]'));
   aboutHeading.textContent = locale === 'en' ? translated(englishAbout.heading, 'About') : site.about.heading;
@@ -1029,7 +1182,9 @@ function refreshLocale() {
   stage.setAttribute('aria-label', t('viewer'));
   for (const navigation of viewer.querySelectorAll('nav')) navigation.setAttribute('aria-label', t('bookNavigation'));
   projectViewer.querySelector('nav').setAttribute('aria-label', t('projectNavigation'));
-  $('read-book').firstChild.textContent = t('read') + ' ';
+  jumpInput.labels[0].textContent = t('pageNumber');
+  $('jump-submit').textContent = t('jump');
+  clearJumpError();
   for (const entry of entries) {
     const thumbnail = projectCards.get(entry.id);
     const onShelf = bookLinks && entry.type === 'book';
@@ -1049,7 +1204,7 @@ function refreshLocale() {
   if (route.page === 'detail') updateProjectText(route.entry);
   if (activeBook) updateBookText(activeBook);
   for (const page of container.querySelectorAll('[data-page]')) page.setAttribute('aria-label', pageLabel(page.dataset.page));
-  for (const spread of container.querySelectorAll('[data-first]')) spread.setAttribute('aria-label', pageLabel(spreadLabel(Number(spread.dataset.first))));
+  for (const spread of container.querySelectorAll('[data-spread-index]')) spread.setAttribute('aria-label', pageLabel(spreadLabel(Number(spread.dataset.spreadIndex))));
   updateNavigation();
   updateDocumentTitle();
 }
@@ -1068,10 +1223,7 @@ function chooseLocale(next, { updateURL = true, save = true } = {}) {
   refreshLocale();
 }
 
-$('language-switch').addEventListener('click', event => {
-  const button = event.target.closest('button[data-locale]');
-  if (button) chooseLocale(button.dataset.locale);
-});
+$('language-toggle').addEventListener('click', () => chooseLocale(locale === 'ko' ? 'en' : 'ko'));
 
 function routeFromHash() {
   const hash = location.hash.slice(1);
@@ -1088,6 +1240,8 @@ function routeFromHash() {
 
 function showBook(book, moveFocus) {
   pages = book.pages;
+  spreads = readerSpreads(book);
+  rememberedPage = readBookmark(book);
   mobile.reset();
   updateBookText(book);
   model.dataset.book = book.id;
@@ -1095,10 +1249,10 @@ function showBook(book, moveFocus) {
   stage.dataset.binding = book.bindingType ?? 'paperback';
   stage.toggleAttribute('data-proportional', !!book.coverRatio);
   stage.toggleAttribute('data-uploaded', !!book.coverImages);
-  stage.style.setProperty('--book-ratio', book.coverRatio ?? '');
+  stage.style.setProperty('--book-ratio', book.trimSizeMm ? book.trimSizeMm[0] / book.trimSizeMm[1] : book.coverRatio ?? '');
   stage.style.setProperty('--spread-ratio', book.pageRatio ? 2 * book.pageRatio : '');
-  model.style.setProperty('--spine-ratio', spineRatio(book));
-  addCoverArt(model.querySelector('.front'), book);
+  const front = model.querySelector('.front');
+  addCoverArt(front, book);
   const back = model.querySelector('.back');
   const spine = model.querySelector('.spine');
   back.replaceChildren();
@@ -1119,11 +1273,14 @@ function showBook(book, moveFocus) {
   } else {
     appendText(spine, 'span', '', book.title).lang = titleLanguage(book.title);
   }
+  setBookMaterial(model, book, front);
   orbit.setAttribute('aria-label', itemCopy(book).title + ' ' + t('coverView'));
   model.classList.add('resetting');
-  setRotation(initialRotation.x, initialRotation.y);
+  const angle = mockupViews[book.mockupView] ?? initialRotation;
+  setRotation(angle.x, angle.y);
   requestAnimationFrame(() => model.classList.remove('resetting'));
   positionDisplay.lastElementChild.textContent = `/ ${pages.length}`;
+  $('page-total').textContent = '/ ' + pages.length;
   updateNavigation();
   if (moveFocus) heading.focus({ preventScroll: true });
 }

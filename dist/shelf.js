@@ -1,5 +1,5 @@
 import { titleLanguage } from './title-language.js';
-import { spineRatio } from './catalog.js';
+import { setBookMaterial } from './book-material.js';
 
 const hoverDelay = 105;
 const revealDelay = 295;
@@ -40,8 +40,7 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     link.lang = titleLanguage(book.title);
     if (book.coverRatio) {
       link.setAttribute('data-proportional', '');
-      link.style.setProperty('--shelf-book-ratio', book.coverRatio);
-      link.style.setProperty('--shelf-spine-ratio', spineRatio(book));
+      link.style.setProperty('--shelf-book-ratio', book.trimSizeMm ? book.trimSizeMm[0] / book.trimSizeMm[1] : book.coverRatio);
     }
     link.toggleAttribute('data-uploaded', !!book.coverImages);
     spine.className = 'shelf-spine';
@@ -56,6 +55,7 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     cover.setAttribute('aria-hidden', 'true');
     addCoverArt(cover, book);
     link.append(spine, cover);
+    setBookMaterial(link, book, cover);
 
     link.addEventListener('pointerenter', (event) => {
       if (event.pointerType === 'touch' || selectionTimer !== undefined) return;

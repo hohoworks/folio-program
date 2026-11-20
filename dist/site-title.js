@@ -1,3 +1,5 @@
+import { displayText } from './punctuation.js';
+
 export const DEFAULT_SITE_TITLE = 'HOHO WORKS';
 
 // Only the original starter setting has this revision. Later edits keep the chosen name.
@@ -13,5 +15,5 @@ export function localizedSiteTitles(site) {
   const ko = typeof title === 'string' && title.trim() ? title.trim() : DEFAULT_SITE_TITLE;
   const translation = site?.translations?.en?.title;
   const en = typeof translation === 'string' && translation.trim() ? translation : ko;
-  return { ko, en };
+  return { ko: displayText(ko), en: displayText(en) };
 }

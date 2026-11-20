@@ -1,0 +1,13 @@
+:host { display: block; margin-top: 14px; border: 1px solid #dedede; }
+.stage[data-proportional] {
+  --stage-height: clamp(190px, 30vw, 260px);
+  --model-width: min(62cqw, calc(var(--stage-height) * .68 * var(--book-ratio) / (1 + var(--extra-ribbon-height, 0))));
+  --type: system-ui, sans-serif;
+  --ink: #171717;
+  display: grid;
+  place-items: center;
+  background: #f7f7f5;
+}
+.front:not(.artwork) { background: var(--case-color, #e6e5e3); color: var(--case-ink, #191919); }
+.back-title { font-size: clamp(13px, 4cqw, 24px); }
+@media (prefers-reduced-motion: reduce) { .book-model { transition: none; } }

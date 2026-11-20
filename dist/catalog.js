@@ -1,5 +1,9 @@
+import { validBookColor, mockupViews } from './book-material.js';
+import { resolveMockupDetails } from './mockup-options.js';
+export { trimSize, spineRatio } from './book-material.js';
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { localizedSiteTitles } from './site-title.js';
+import { displayText } from './punctuation.js';
 
 const positive = value => Number.isFinite(value) && value > 0;
 const assetPath = /^(?:\.\/)?assets\/(books|projects|site)\/(?:[\w-]+\/)+[\w.-]+\.(?:png|jpe?g|webp)$/i;
@@ -21,24 +25,6 @@ function englishFields(source) {
   };
 }
 
-export function trimSize(book) {
-  if (book.trimSizeMm) return book.trimSizeMm;
-  const ratio = book.coverRatio;
-  if (!ratio) return [148, 210];
-  return ratio >= 1 ? [210, 210 / ratio] : [210 * ratio, 210];
-}
-
-export function spineRatio(book) {
-  const paperWidth = book.pages.length * .1;
-  let estimate = Math.max(3.5, paperWidth + .5);
-  switch (book.bindingType) {
-    case 'hardcover': estimate = Math.max(5, paperWidth + 4.5); break;
-    case 'saddle-stitch': estimate = Math.min(4, Math.max(1, paperWidth)); break;
-    case 'exposed-sewn': estimate = Math.max(3, paperWidth); break;
-  }
-  return (book.spineWidthMm ?? estimate) / trimSize(book)[0];
-}
-
 function publishedBook(book) {
   if (!book || book.published === false || typeof book.id !== 'string' || !/^[\w-]+$/.test(book.id)
       || typeof book.title !== 'string' || !book.title.trim()
@@ -47,6 +33,13 @@ function publishedBook(book) {
     return null;
   }
 
+  const joinHalves = book.joinSplitPages === true && book.pages.length % 2 === 0;
+  const pages = [];
+  for (let index = 0; index < book.pages.length; index += joinHalves ? 2 : 1) {
+    const page = { imageSrc: book.pages[index].imageSrc };
+    if (joinHalves) page.rightImageSrc = book.pages[index + 1].imageSrc;
+    pages.push(page);
+  }
   return {
     type: 'book',
     translations: englishFields(book),
@@ -58,11 +51,20 @@ function publishedBook(book) {
     year: typeof book.year === 'string' || Number.isFinite(book.year) ? String(book.year) : '',
     language: typeof book.language === 'string' ? book.language : '',
     bindingType: bindings.includes(book.bindingType) ? book.bindingType : 'paperback',
+    pageJumpEnabled: book.pageJumpEnabled !== false,
+    resumeReadingEnabled: book.resumeReadingEnabled !== false,
+    mockupView: Object.hasOwn(mockupViews, book.mockupView) ? book.mockupView : 'spine',
+    mockupDetails: resolveMockupDetails(book.mockupDetails),
+    caseColor: validBookColor(book.caseColor) ? book.caseColor : undefined,
+    paperColor: validBookColor(book.paperColor) ? book.paperColor : undefined,
     trimSizeMm: book.trimSizeMm?.length === 2 && Array.isArray(book.trimSizeMm) && book.trimSizeMm.every(positive)
       ? book.trimSizeMm : undefined,
     spineWidthMm: positive(book.spineWidthMm) ? book.spineWidthMm : undefined,
     coverRatio: book.coverRatio,
-    pageRatio: book.pageRatio,
+    pageRatio: joinHalves ? book.pageRatio * 2 : book.pageRatio,
+    ...(['right', 'left'].includes(book.firstPageSide) && { firstPageSide: book.firstPageSide }),
+    ...(!joinHalves && book.pdfLayout === 'spread' && { pdfLayout: 'spread' }),
+    ...(!joinHalves && book.pdfLayout === 'mixed' && { pdfSheetSides: book.pdfSheetSides }),
     thumbnailSrc: asset(book.thumbnailSrc) ? book.thumbnailSrc : undefined,
     coverImages: {
       front: book.coverImages.front,
@@ -72,10 +74,31 @@ function publishedBook(book) {
     galleryImages: Array.isArray(book.galleryImages)
       ? book.galleryImages.filter(image => asset(image?.imageSrc)).map(image => ({
         imageSrc: image.imageSrc,
-        alt: typeof image.alt === 'string' ? image.alt : '',
+        alt: typeof image.alt === 'string' ? displayText(image.alt) : '',
       })) : [],
-    pages: book.pages,
+    pages,
   };
+}
+
+export function readerSpreads(book) {
+  const sides = book.pdfSheetSides;
+  const mixed = Array.isArray(sides) && sides.every(count => count === 1 || count === 2) &&
+    sides.reduce((sum, count) => sum + count, 0) === book.pages.length;
+  const spreads = [];
+  let page = 1;
+  if (!mixed && book.pdfLayout !== 'spread' && book.firstPageSide === 'right' && book.pages.length > 0) {
+    spreads.push({ left: 0, right: 1 });
+    page = 2;
+  }
+  const oddSoloOnRight = mixed && (sides[0] === 2 || book.firstPageSide !== 'left');
+  while (page <= book.pages.length) {
+    const count = mixed ? sides[spreads.length] : Math.min(2, book.pages.length - page + 1);
+    if (count === 2) spreads.push({ left: page, right: page + 1 });
+    else if (mixed && (page % 2 === 1) === oddSoloOnRight) spreads.push({ left: 0, right: page });
+    else spreads.push({ left: page, right: 0 });
+    page += count;
+  }
+  return spreads;
 }
 
 function publishedProject(project) {
@@ -97,7 +120,7 @@ function publishedProject(project) {
     year: typeof project.year === 'string' || Number.isFinite(project.year) ? String(project.year) : '',
     images: project.images.map(image => ({
       imageSrc: image.imageSrc,
-      alt: typeof image.alt === 'string' ? image.alt : '',
+      alt: typeof image.alt === 'string' ? displayText(image.alt) : '',
       ...(positive(image.ratio) ? { ratio: image.ratio } : {}),
     })),
   };
@@ -124,11 +147,12 @@ function publicLink(link) {
       return { kind: 'instagram', label: '@' + handle, url: url.href };
     }
   }
-  return { label, url: url.href };
+  return { label: displayText(label), url: url.href };
 }
 
 function siteSettings(site) {
-  const text = value => typeof value === 'string' ? value : '';
+  const text = value => typeof value === 'string' ? displayText(value) : '';
+  const englishAboutText = text(site?.translations?.en?.about?.text);
   const links = Array.isArray(site?.contact?.links) ? site.contact.links : [];
   const tagSource = Array.isArray(site?.projectTags) ? site.projectTags : STOCK_PROJECT_TAGS;
   const tags = new Map();
@@ -148,7 +172,7 @@ function siteSettings(site) {
     },
     contact: {
       text: text(site?.contact?.text),
-      email: /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(text(site?.contact?.email)) ? site.contact.email : '',
+      email: typeof site?.contact?.email === 'string' && /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(site.contact.email) ? site.contact.email : '',
       links: links.map(publicLink).filter(Boolean),
     },
     translations: {
@@ -156,8 +180,8 @@ function siteSettings(site) {
         title: text(site?.translations?.en?.title),
         about: {
           heading: text(site?.translations?.en?.about?.heading).trim() || 'About',
-          text: text(site?.translations?.en?.about?.text).trim()
-            ? site.translations.en.about.text
+          text: englishAboutText.trim()
+            ? englishAboutText
             : text(site?.about?.text).trim() ? '' : 'A portfolio of books and design work.',
         },
         contact: { text: text(site?.translations?.en?.contact?.text) },
@@ -166,10 +190,21 @@ function siteSettings(site) {
   };
 }
 
+function displayFields(entry) {
+  const fields = { ...entry };
+  for (const key of ['title', 'category', 'language']) {
+    if (typeof entry[key] === 'string') fields[key] = displayText(entry[key]);
+  }
+  if (Array.isArray(entry.description)) fields.description = entry.description.map(displayText);
+  return fields;
+}
+
 function orderedCatalog(bookEntries, projects = [], order = [], site) {
   const settings = siteSettings(site);
   const entries = [...bookEntries, ...projects].map(entry => ({
-    ...entry, tagIds: idsFor(entry, entry.type, settings.projectTags),
+    ...displayFields(entry),
+    ...(entry.translations?.en && { translations: { ...entry.translations, en: displayFields(entry.translations.en) } }),
+    tagIds: idsFor(entry, entry.type, settings.projectTags),
   }));
   const byID = new Map(entries.map(entry => [entry.id, entry]));
   const ordered = [];

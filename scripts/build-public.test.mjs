@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { buildPublic } from './build-public.mjs';
+import { loadCatalog, readerSpreads } from '../dist/catalog.js';
 
 function assertStaticWordmark(html, expectedText) {
   // Check what the header contains even when scripts and styles have not loaded.
@@ -23,7 +24,7 @@ async function fixture(t) {
       await cp(new URL(name, dist), join(source, name));
     }
   }
-  for (const name of ['folio.svg', 'forest.jpg', 'forest-cover.webp', 'examples']) {
+  for (const name of ['folio.svg', 'sewn-signatures.webp', 'forest.jpg', 'forest-cover.webp', 'examples', 'fonts']) {
     await cp(new URL('assets/' + name, dist), join(source, 'assets', name), { recursive: true });
   }
   async function write(path, content) {
@@ -35,6 +36,83 @@ async function fixture(t) {
     read: async () => JSON.parse(await readFile(join(output, 'catalog.json'), 'utf8')),
   };
 }
+
+test('explicit repair joins neighboring scans into complete reader pages without replacing the source images', async t => {
+  const f = await fixture(t);
+  const files = Array.from({ length: 4 }, (_, i) => 'assets/books/old/page-' + (i + 1) + '.webp');
+  for (const path of files) await f.write(path, 'source ' + path);
+  const pages = files.map(imageSrc => ({ imageSrc }));
+  const book = { id: 'old', title: '책', coverRatio: .62, coverImages: { front: files[0] }, pageRatio: .34, pages };
+  t.mock.method(globalThis, 'fetch', async () => Response.json(await f.read()));
+  for (const repair of [false, true]) {
+    await f.save({ books: [{ ...book, ...(repair && { joinSplitPages: true }) }] });
+    await buildPublic(f.root);
+    assert.deepEqual((await f.read()).books[0].pages, pages);
+    const [result] = (await loadCatalog()).books;
+    assert.equal(result.pageRatio, repair ? .68 : .34);
+    assert.deepEqual(result.pages, repair ? [
+      { imageSrc: files[0], rightImageSrc: files[1] },
+      { imageSrc: files[2], rightImageSrc: files[3] },
+    ] : pages);
+    for (const path of files) assert.equal(await readFile(join(f.output, path), 'utf8'), 'source ' + path);
+  }
+  await f.save({ books: [{ ...book, joinSplitPages: true, pages: pages.slice(1) }] });
+  await assert.rejects(buildPublic(f.root), /짝/);
+  assert.equal((await f.read()).books[0].pages.length, 4);
+});
+
+test('public books use saved finishes and keep defaults for legacy or malformed fields', async t => {
+  const imageSrc = 'assets/books/print/cover.webp';
+  const source = { id: 'print', title: '책', coverRatio: .7, coverImages: { front: imageSrc }, pageRatio: .7, pages: [{ imageSrc }] };
+  const books = [source, { ...source, id: 'case', bindingType: 'hardcover',
+    mockupDetails: { spineShape: 'round', ribbonEnabled: true, ribbonAngle: 45, headbandColor: '#da597c', boardThicknessMm: 300 } }];
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ books }));
+  const [original, finished] = (await loadCatalog()).books;
+  assert.equal(original.mockupDetails.ribbonEnabled, false);
+  assert.equal(original.mockupDetails.boardThicknessMm, null);
+  assert.equal(finished.mockupDetails.spineShape, 'round');
+  assert.equal(finished.mockupDetails.ribbonAngle, 45);
+  assert.equal(finished.mockupDetails.ribbonEnabled, true);
+  assert.equal(finished.mockupDetails.headbandColor, '#da597c');
+  assert.equal(finished.mockupDetails.boardThicknessMm, null);
+});
+
+test('mixed sheets keep their original pairs and solo pages through the public catalog', async t => {
+  const folder = 'assets/books/mixed/';
+  const book = { id: 'mixed', title: '혼합', coverRatio: .6, coverImages: { front: folder + 'front.webp' }, pageRatio: .6,
+    pages: Array.from({ length: 6 }, (_, i) => ({ imageSrc: folder + i + '.webp' })), pdfLayout: 'mixed', pdfSheetSides: [1, 2, 2, 1] };
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ books: [book] }));
+  const [mixed] = (await loadCatalog()).books;
+  assert.deepEqual(readerSpreads(mixed), [{ left: 0, right: 1 }, { left: 2, right: 3 }, { left: 4, right: 5 }, { left: 6, right: 0 }]);
+  assert.deepEqual(readerSpreads({ ...mixed, pdfSheetSides: [2, 1, 1, 2] }), [
+    { left: 1, right: 2 }, { left: 0, right: 3 }, { left: 4, right: 0 }, { left: 5, right: 6 },
+  ]);
+  assert.deepEqual(readerSpreads({ pages: book.pages.slice(0, 3) }), [{ left: 1, right: 2 }, { left: 3, right: 0 }]);
+  assert.deepEqual(readerSpreads({ ...mixed, firstPageSide: 'left' }), [
+    { left: 1, right: 0 }, { left: 2, right: 3 }, { left: 4, right: 5 }, { left: 0, right: 6 },
+  ]);
+});
+
+test('opening a loose-leaf book on the recto leaves the verso empty without counting it', () => {
+  const spreads = (count, firstPageSide) => readerSpreads({ pages: Array(count), firstPageSide });
+  assert.deepEqual(spreads(1, 'right'), [{ left: 0, right: 1 }]);
+  assert.deepEqual(spreads(3, 'right'), [{ left: 0, right: 1 }, { left: 2, right: 3 }]);
+  assert.deepEqual(spreads(2, 'left'), [{ left: 1, right: 2 }]);
+  assert.deepEqual(spreads(2), [{ left: 1, right: 2 }]);
+  const book = spreads(340, 'right');
+  assert.deepEqual(book.at(-1), { left: 340, right: 0 });
+  assert.deepEqual(book.flatMap(({ left, right }) => [left, right]).filter(Boolean), Array.from({ length: 340 }, (_, i) => i + 1));
+});
+
+test('the reader preserves composed PDF spreads and applies recto after repairing false splits', async t => {
+  const path = 'assets/books/old/scan.webp';
+  const book = { id: 'original', title: '책', coverRatio: .7, coverImages: { front: path }, pageRatio: .7,
+    pages: Array.from({ length: 4 }, () => ({ imageSrc: path })), pdfLayout: 'spread', firstPageSide: 'right' };
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ books: [book, { ...book, id: 'repaired', joinSplitPages: true }] }));
+  const [original, repaired] = (await loadCatalog()).books;
+  assert.deepEqual(readerSpreads(original), [{ left: 1, right: 2 }, { left: 3, right: 4 }]);
+  assert.deepEqual(readerSpreads(repaired), [{ left: 0, right: 1 }, { left: 2, right: 0 }]);
+});
 
 test('only public records and referenced images reach Pages, including after unpublishing', async t => {
   const f = await fixture(t);
@@ -180,7 +258,7 @@ test('separate checkouts publish current private-repository data and program-rep
   const readOutput = path => readFile(join(outputDir, path), 'utf8');
   assert.equal(await readOutput(image), 'published artwork');
   const home = await readOutput('index.html');
-  assert.ok(home.includes('<title data-en="Studio &quot;A&quot; / $&amp;">작업 &amp; &lt;책&gt;</title>'));
+  assert.ok(home.includes('<title data-en="Studio “A” / $&amp;">작업 &amp; &lt;책&gt;</title>'));
   assertStaticWordmark(home, '작업 &amp; &lt;책&gt;');
   assert.deepEqual(JSON.parse(await readOutput('catalog.json')).projects.map(item => item.id), ['live']);
   await assert.rejects(readOutput(draft), { code: 'ENOENT' });

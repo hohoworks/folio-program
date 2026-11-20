@@ -1,4 +1,6 @@
 import { STOCK_PROJECT_TAGS, idsFor } from '../dist/project-tags.js';
+import { mockupViews, validBookColor } from '../dist/book-material.js';
+import { mockupDetailFields, validMockupDetail } from '../dist/mockup-options.js';
 import { DEFAULT_SITE_TITLE, migrateStarterSite } from '../dist/site-title.js';
 
 const sessionCookie = '__Host-folio-admin';
@@ -689,6 +691,41 @@ function buildItem(data, existing, kind, registrationId) {
   const bindingType = data.bindingType ?? existing?.bindingType ?? 'paperback';
   if (!bindingTypes.has(bindingType)) throw new RequestError(400, '제본 방식을 확인해주세요.');
   item.bindingType = bindingType;
+  if (data.mockupDetails === null) delete item.mockupDetails;
+  else if (data.mockupDetails !== undefined) {
+    if (!isRecord(data.mockupDetails)) throw new RequestError(400, '책 목업 설정을 확인해주세요.');
+    const details = { ...existing?.mockupDetails };
+    for (const [key, value] of Object.entries(data.mockupDetails)) {
+      if (!Object.hasOwn(mockupDetailFields, key)) throw new RequestError(400, '알 수 없는 책 목업 설정입니다.');
+      const field = mockupDetailFields[key];
+      if (!validMockupDetail(field, value)) throw new RequestError(400, field.label + ' 값을 확인해주세요.');
+      const normalized = field.type === 'color' && value ? value.toLowerCase() : value;
+      if (normalized === field.default) delete details[key];
+      else details[key] = normalized;
+    }
+    if (Object.keys(details).length) item.mockupDetails = details;
+    else delete item.mockupDetails;
+  }
+  for (const key of ['pageJumpEnabled', 'resumeReadingEnabled']) {
+    if (data[key] === undefined) continue;
+    if (typeof data[key] !== 'boolean') throw new RequestError(400, '책 읽기 설정을 확인해주세요.');
+    item[key] = data[key];
+  }
+  if (data.mockupView !== undefined) {
+    if (typeof data.mockupView !== 'string' || !Object.hasOwn(mockupViews, data.mockupView)) throw new RequestError(400, '목업의 첫 각도를 확인해주세요.');
+    item.mockupView = data.mockupView;
+  }
+  for (const key of ['caseColor', 'paperColor']) {
+    if (data[key] === undefined) continue;
+    if (data[key] === null) delete item[key];
+    else if (validBookColor(data[key])) item[key] = data[key].toLowerCase();
+    else throw new RequestError(400, '목업 색상을 확인해주세요.');
+  }
+  if (data.firstPageSide === null) delete item.firstPageSide;
+  else if (data.firstPageSide !== undefined) {
+    if (!['right', 'left'].includes(data.firstPageSide)) throw new RequestError(400, '첫 페이지 위치를 확인해주세요.');
+    item.firstPageSide = data.firstPageSide;
+  }
   for (const field of ['coverRatio', 'pageRatio']) {
     const value = data[field] === undefined ? existing?.[field] : data[field];
     if (!positive(value) || value < 0.05 || value > 20) {
@@ -719,11 +756,45 @@ function buildItem(data, existing, kind, registrationId) {
     else item.coverImages[face] = addImage(assets[face], face);
   }
   if (!item.coverImages.front) throw new RequestError(400, '앞표지를 업로드해주세요.');
+  if (data.joinSplitPages !== undefined && typeof data.joinSplitPages !== 'boolean') {
+    throw new RequestError(400, '분리된 내지 복원 설정을 확인해주세요.');
+  }
   if (assets.pages !== undefined || !existing) {
     if (!Array.isArray(assets.pages) || !assets.pages.length || assets.pages.length > maxPages) {
       throw new RequestError(400, '내지는 1~1,000쪽까지 등록할 수 있습니다.');
     }
+    if (data.joinSplitPages) throw new RequestError(400, '분리된 기존 이미지에만 내지 복원을 적용할 수 있습니다.');
+    delete item.pdfLayout;
+    delete item.pdfSheetSides;
+    delete item.joinSplitPages;
+    if (data.pdfSheetSides !== undefined && data.pdfLayout !== 'mixed') throw new RequestError(400, '혼합 PDF 페이지 구성을 확인해주세요.');
+    if (data.pdfLayout !== undefined) {
+      if (!['single', 'spread', 'mixed'].includes(data.pdfLayout) ||
+          (data.pdfLayout === 'spread' && assets.pages.length % 2 !== 0) ||
+          (data.pdfLayout === 'mixed' && assets.pages.length < 3)) {
+        throw new RequestError(400, 'PDF 구성과 변환된 쪽수를 확인해주세요.');
+      }
+      item.pdfLayout = data.pdfLayout;
+      if (data.pdfLayout === 'mixed') {
+        const sides = data.pdfSheetSides;
+        if (!Array.isArray(sides) || sides.length > maxPages || !sides.includes(1) || !sides.includes(2) ||
+            !sides.every(n => n === 1 || n === 2) || sides.reduce((sum, n) => sum + n, 0) !== assets.pages.length) {
+          throw new RequestError(400, '혼합 PDF 페이지 구성과 내지 쪽수를 확인해주세요.');
+        }
+        item.pdfSheetSides = sides;
+      }
+    }
     item.pages = assets.pages.map((file, index) => ({ imageSrc: addImage(file, 'page-' + String(index + 1).padStart(4, '0')) }));
+  } else {
+    if (data.pdfSheetSides !== undefined || (data.pdfLayout !== undefined && data.pdfLayout !== existing.pdfLayout)) {
+      throw new RequestError(400, 'PDF 구성을 바꾸려면 원본 PDF를 다시 선택해주세요.');
+    }
+    if (data.joinSplitPages === true) {
+      if (!item.pages?.length || item.pages.length % 2 !== 0 || (item.pdfLayout && item.pdfLayout !== 'spread' && !existing.joinSplitPages)) {
+        throw new RequestError(400, '좌우 반쪽이 짝을 이룬 기존 내지에만 복원을 적용할 수 있습니다.');
+      }
+      item.joinSplitPages = true;
+    } else if (data.joinSplitPages === false) delete item.joinSplitPages;
   }
   if (assets.galleryImages !== undefined) {
     item.galleryImages = imageList(assets.galleryImages === null ? [] : assets.galleryImages,
@@ -1010,7 +1081,7 @@ async function handle(request, env) {
   if (pathname === '/api/delete' && request.method === 'POST') return deleteItem(request, env);
   if (pathname === '/api/order' && request.method === 'POST') return reorderItems(request, env);
   if ((request.method === 'GET' || request.method === 'HEAD') &&
-      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/image-encoding.js'].includes(pathname) || pathname.startsWith('/vendor/'))) {
+      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/image-encoding.js', '/pdf-layout.js', '/mockup-controls.js', '/mockup-preview.js', '/mockup-preview.css'].includes(pathname) || pathname.startsWith('/vendor/'))) {
     return staticAsset(url, request, env, pathname);
   }
   throw new RequestError(404, '요청한 페이지를 찾을 수 없습니다.');
