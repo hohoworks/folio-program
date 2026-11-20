@@ -563,6 +563,7 @@ test('book finishing settings survive partial updates and can be reset without u
     headbandEnabled: true, ribbonColor: '#cc6677', coverGloss: 70 };
   assert.equal((await edit({ bindingType: 'hardcover', mockupDetails: options })).status, 200);
   for (const invalid of [{ coverGloss: 101 }, { threadColor: 'red' }, { stapleCount: 3.2 }, { ribbonEnabled: 1 },
+    { sewingStationCount: 0 }, { sewingStationCount: 13 }, { sewingStationCount: 2.5 },
     { spineShape: 'constructor' }, { unrecognized: 4 }, [], '3']) {
     assert.equal((await edit({ mockupDetails: invalid })).status, 400);
     assert.deepEqual(state.catalog.books[0].mockupDetails, options);
@@ -571,6 +572,10 @@ test('book finishing settings survive partial updates and can be reset without u
   const expected = { ...options, ribbonColor: '#bb4466' };
   delete expected.boardThicknessMm;
   assert.equal((await edit({ bindingType: 'saddle-stitch' })).status, 200);
+  assert.deepEqual(state.catalog.books[0].mockupDetails, expected);
+  assert.equal((await edit({ bindingType: 'exposed-sewn', mockupDetails: { sewingStationCount: 7 } })).status, 200);
+  assert.deepEqual(state.catalog.books[0].mockupDetails, { ...expected, sewingStationCount: 7 });
+  assert.equal((await edit({ mockupDetails: { sewingStationCount: 5 } })).status, 200);
   assert.deepEqual(state.catalog.books[0].mockupDetails, expected);
   assert.equal((await edit({ mockupDetails: null })).status, 200);
   assert.equal(Object.hasOwn(state.catalog.books[0], 'mockupDetails'), false);
