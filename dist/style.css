@@ -765,7 +765,7 @@ h1:focus { outline: none; }
 }
 [data-binding="exposed-sewn"] :is(.spine, .shelf-spine):not(.artwork) {
   background: linear-gradient(90deg, #655b4e3b, transparent 12% 84%, #58493733),
-    url("./assets/sewn-signatures.webp") left top / var(--sewing-repeat, 35%) 40% repeat, #dfd9c9;
+    url("./assets/sewn-signatures.webp") left top / var(--sewing-repeat, 35%) var(--sewing-tile-height, 40%) repeat, #dfd9c9;
   color: transparent;
 }
 [data-binding="saddle-stitch"] .spine span, [data-binding="exposed-sewn"] .spine span { display: none; }
@@ -920,7 +920,7 @@ h1:focus { outline: none; }
   background: var(--thread-color);
   opacity: .9;
   /* Match the two sewn paths within each repeat of the folded-signature texture. */
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 2048' preserveAspectRatio='none'%3E%3Cpath d='M-55 538L9 489Q35 507 73 530Q101 510 137 496Q162 510 201 538L265 489M-55 1549L9 1520Q36 1536 73 1560Q105 1535 137 1511Q163 1531 201 1549L265 1520' fill='none' stroke='black' stroke-width='13' stroke-linejoin='round'/%3E%3C/svg%3E") left top / var(--sewing-repeat, 35%) 40% repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 2048' preserveAspectRatio='none'%3E%3Cpath d='M-55 538L9 489Q35 507 73 530Q101 510 137 496Q162 510 201 538L265 489M-55 1549L9 1520Q36 1536 73 1560Q105 1535 137 1511Q163 1531 201 1549L265 1520' fill='none' stroke='black' stroke-width='13' stroke-linejoin='round'/%3E%3C/svg%3E") left top / var(--sewing-repeat, 35%) var(--sewing-tile-height, 40%) repeat;
 }
 .cover-art .cover-display:lang(ko) {
   inset-inline: 8%;

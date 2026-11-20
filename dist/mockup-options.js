@@ -19,6 +19,7 @@ export const mockupDetailFields = Object.freeze({
   stapleCount: { ...number('철심 개수', 2, 2, 10), integer: true },
   stapleThicknessMm: number('철심 굵기', 0.3, 0.1, 0.5, 0.01),
   stapleColor: color('철심색', '#9a9a9a'),
+  sewingStationCount: { ...number('노출사철 실 개수', 5, 1, 12), integer: true },
   threadColor: color('제본 실색', null),
 });
 
