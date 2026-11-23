@@ -5,7 +5,7 @@ import { createCurl, createCardTurn } from './curl.js';
 import { bookLeafGeometry, cardFaces, cardThumbnail, physicalSpreads } from './book-format.js';
 import { createMobileReader } from './mobile-reader.js';
 import { addReaderSaddle } from './saddle-material.js';
-import { addReaderWire } from './book-surfaces.js';
+import { addReaderWire, coverPunchLayout } from './book-surfaces.js';
 import { createShelf } from './shelf.js';
 import { titleLanguage, alignDetailTitle } from './title-language.js';
 import { DEFAULT_SITE_TITLE, localizedSiteTitles } from './site-title.js';
@@ -463,6 +463,7 @@ function coverLeaf() {
   front.classList.remove('face', 'front');
   front.classList.add('paper', 'cover-leaf');
   front.dataset.book = activeBook.id;
+  addFlatCoverPunches(front, activeBook);
   return front;
 }
 
@@ -769,6 +770,26 @@ function addShelfThumbnail(cover, book) {
   else addCoverArt(cover, book, book.thumbnailSrc);
 }
 
+function addFlatCoverPunches(cover, book) {
+  const layout = coverPunchLayout(book);
+  if (!layout) return;
+  const { width, height, radius, centers } = layout;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'flat-cover-punches');
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  for (const [x, y] of centers) {
+    const hole = document.createElementNS(svg.namespaceURI, 'circle');
+    hole.setAttribute('cx', x);
+    hole.setAttribute('cy', y);
+    hole.setAttribute('r', radius * .9);
+    hole.setAttribute('stroke-width', radius * .2);
+    svg.append(hole);
+  }
+  cover.append(svg);
+}
+
 function stopCoverArrival() {
   coverArrival?.cancel();
   coverArrival = undefined;
@@ -881,6 +902,7 @@ function renderShelf() {
     const jacket = appendText(link, 'span', 'index-jacket cover-art', '');
     jacket.setAttribute('aria-hidden', 'true');
     addShelfThumbnail(jacket, book);
+    addFlatCoverPunches(jacket, book);
     appendText(link, 'span', 'index-title', '');
     indexLinks.set(book.id, link);
     setShelfLabels(book, itemCopy(book).title);
@@ -1132,6 +1154,7 @@ function portfolioRow(entry) {
     cover.dataset.book = entry.id;
     cover.setAttribute('aria-label', content.title + ' ' + t('cover'));
     addCoverArt(cover, entry);
+    addFlatCoverPunches(cover, entry);
   }
   const media = entry.type === 'book'
     ? [...(entry.coverImages ? [{ imageSrc: entry.coverImages.front, alt: content.title + ' ' + t('cover') }] : []), ...(entry.galleryImages ?? [])]
@@ -1142,7 +1165,10 @@ function portfolioRow(entry) {
       addProjectPlayer(figure, item, index, content.title);
     } else {
       const image = addAssetImage(figure, item.imageSrc, { lazy: index > 0, alt: item.alt });
-      if (entry.type === 'book' && entry.coverImages && index === 0) image.setAttribute('data-cover-alt', '');
+      if (entry.type === 'book' && entry.coverImages && index === 0) {
+        image.setAttribute('data-cover-alt', '');
+        addFlatCoverPunches(figure, entry);
+      }
     }
     pictures.append(figure);
   }
@@ -1205,6 +1231,7 @@ function createProjectCard(entry, index) {
   } else {
     link.dataset.textPreview = '';
   }
+  if (isBook) addFlatCoverPunches(picture, entry);
   const overlay = appendText(picture, 'span', 'project-card-hover', '');
   overlay.setAttribute('aria-hidden', 'true');
   appendText(overlay, 'span', 'project-card-title', content.title);

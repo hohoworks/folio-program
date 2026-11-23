@@ -96,6 +96,17 @@
   pointer-events: none;
 }
 .shelf-hardware { opacity: 0; transition: opacity var(--shelf-face-leave); }
+.flat-cover-punches {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: #39332d;
+  stroke: #b5a791;
+  pointer-events: none;
+}
+.editorial-images figure:has(> .flat-cover-punches) { position: relative; }
 .shelf-book[data-wire-bound] .shelf-spine { display: none; }
 .shelf-book[data-wire-bound]:not(.is-preview) {
   width: calc(var(--profile-height) * var(--profile-ratio));
