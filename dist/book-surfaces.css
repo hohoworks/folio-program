@@ -7,7 +7,7 @@
 /* The print faces stay flat. Each board edge travels from its outside ply
    toward the text block. The back board is the mirror of the front board. */
 .book-model[data-cover-stock] {
-  --board: min(var(--custom-board), calc((var(--depth) - min(.5px, var(--depth) * .04)) / 2));
+  --board: calc(var(--depth) * var(--cover-depth-share));
 }
 .stage:not([data-binding="hardcover"]) .book-model[data-cover-stock] { --lip: 0px; }
 .book-model[data-cover-stock] .front-board { --fore-plies: to right; --head-plies: to top; --tail-plies: to bottom; }
@@ -17,6 +17,20 @@
 .book-model[data-cover-stock] .board-tail { background: linear-gradient(var(--tail-plies), var(--cover-plies)); }
 .book-model[data-cover-stock] :is(.front-rim.upper, .back-rim.lower) { --strip-color: linear-gradient(to top, var(--cover-plies)); }
 .book-model[data-cover-stock] :is(.front-rim.lower, .back-rim.upper) { --strip-color: linear-gradient(to bottom, var(--cover-plies)); }
+/* Exposed bookblocks have two independent covers. Only their cut edges
+   carry the laminate; the intervening signatures keep their own paper and sewing. */
+.open-board-cut {
+  position: absolute;
+  inset-block: 0;
+  width: calc(100% * var(--cover-depth-share));
+  pointer-events: none;
+}
+.open-board-cut.back-cut { left: 0; background: linear-gradient(to right, var(--cover-plies)); }
+.open-board-cut.front-cut { right: 0; background: linear-gradient(to left, var(--cover-plies)); }
+[data-cover-stock] .exposed-sewing {
+  --binding-depth: calc(var(--depth, var(--visible-spine, var(--spine-width))) * (1 - 2 * var(--cover-depth-share)));
+  inset-inline: calc(100% * var(--cover-depth-share));
+}
 .book-model [data-cut="laminated"] { background: var(--cut-paint); }
 .book-model[data-card-stock] [data-cut="laminated"] {
   background: linear-gradient(146deg, #fff2, transparent 35% 72%, #28201514), var(--cut-paint);
