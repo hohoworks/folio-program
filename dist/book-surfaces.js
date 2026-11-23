@@ -1,5 +1,5 @@
 import { setBookSupport } from './book-photo.js';
-import { bookLeafGeometry, leafCountForBook, trimSize } from './book-format.js';
+import { bookLeafGeometry, leafCountForBook, stockThickness, trimSize } from './book-format.js';
 import { setExposedSewing, setSaddleSpine } from './saddle-material.js';
 import { resolveMockupDetails } from './mockup-options.js';
 
@@ -218,16 +218,24 @@ function punchLayout(binding, details, positions, [width, height]) {
   const length = vertical ? height : width;
   const across = vertical ? width : height;
   const pitch = length / count;
-  const wire = Math.min(1.7, Math.max(.65, diameter * .07), pitch * .27, across * .18);
   const reach = punchInset(diameter, across);
-  const radius = Math.min(wire * (binding === 'ring' ? 1.6 : 1.35), reach * .8, pitch * .36);
+  const autoWire = Math.min(1.7, Math.max(.65, diameter * .07), pitch * .27, across * .18);
+  let wire = autoWire;
+  let radius = Math.min(autoWire * (binding === 'ring' ? 1.6 : 1.35), reach * .8, pitch * .36);
+  const customWire = binding === 'spiral' && details.wireDiameterMm != null;
+  if (customWire) {
+    // Leave room for the neighbouring turn, the opening in the coil, and the
+    // strip of paper between the punched hole and the edge.
+    wire = Math.min(details.wireDiameterMm, pitch * .65, diameter * .42, reach);
+    radius = Math.max(radius, wire * .64);
+  }
   const custom = binding === 'ring' && positions?.length === count;
   const stations = Array.from({ length: count }, (_, i) => {
     const along = custom ? length * positions[i] / 100 : pitch * (i + .5);
     return Math.max(radius, Math.min(length - radius, along));
   });
   const centers = stations.map(along => radial(side, reach, along, 0, width, height).slice(0, 2));
-  return { width, height, side, length, pitch, wire, reach, radius, stations, centers };
+  return { width, height, side, length, pitch, wire, autoWire, customWire, reach, radius, stations, centers };
 }
 
 export function coverPunchLayout(book) {
@@ -237,10 +245,12 @@ export function coverPunchLayout(book) {
 
 export function wireGeometry(binding, details, positions, size, depth, steps = 16) {
   const guide = punchLayout(binding, details, positions, size);
-  const { width, height, side, wire, pitch, reach, stations } = guide;
+  const { width, height, side, autoWire, pitch, reach, stations } = guide;
   const r = details.ringDiameterMm / 2;
   const half = depth / 2;
-  const rz = Math.max(r, half + wire * 1.55);
+  // Gauge changes the tube around the existing centreline. Ring size, pitch
+  // and the points at which the coil enters the paper are independent of it.
+  const rz = Math.max(r, half + autoWire * 1.55);
   const entry = Math.asin(half / rz);
   const cosEntry = Math.cos(entry);
   const tip = Math.PI - entry;
@@ -254,7 +264,7 @@ export function wireGeometry(binding, details, positions, size, depth, steps = 1
     const outside = Math.max(0, (a - entry) / tip);
     const x = a <= entry ? reach : reach - 2 * r * (cosEntry - Math.cos(angle)) / (1 + cosEntry);
     const y = station + (binding === 'spiral' ? Math.sign(angle) * pitch * outside / 2 : 0)
-      + Math.sin(angle) * wire * .65 * outside;
+      + Math.sin(angle) * autoWire * .65 * outside;
     const z = a === entry || a === tip ? Math.sign(angle) * half : rz * Math.sin(angle);
     return { local: [x, y, z], xyz: radial(side, x, y, z, width, height) };
   }));
@@ -347,7 +357,7 @@ export function workWireProjection(book, depth) {
   const top = vertical ? lo : (side === 'top' ? -outer : 0);
   const frameWidth = (vertical ? width + outer : hi - lo) + 2 * padding;
   const frameHeight = (vertical ? hi - lo : height + outer) + 2 * padding;
-  return { width, height, side, radius, wire, centers, outer, lo, hi, runs, ends, color: d.ringColor,
+  return { width, height, side, radius, wire, customWire: geom.customWire, centers, outer, lo, hi, runs, ends, color: d.ringColor,
     bounds: [left - padding, top - padding, frameWidth, frameHeight] };
 }
 
@@ -364,7 +374,7 @@ export function addWorkWire(parent, book, depth) {
   const edgeGroup = () => svgElement('g', { transform: matrix }, svg);
   function metal(group, data, back = false) {
     if (!data) return;
-    const strokes = [['var(--work-wire-edge)',1.12],['var(--work-wire-color)',back ? .60 : .78]];
+    const strokes = [['var(--work-wire-edge)',view.customWire ? 1 : 1.12],['var(--work-wire-color)',back ? .60 : .78]];
     if (!back) strokes.push(['var(--work-wire-light)',.22]);
     for (const [color, scale] of strokes) svgElement('path', { d: data, fill:'none', stroke:color,
       'stroke-width':wire * scale, 'stroke-linejoin':'round', 'stroke-linecap':'round' }, group);
@@ -508,7 +518,7 @@ function modelWire(surface, geom, [width, height], binding) {
     return svgElement('path', { fill: 'none', stroke: color, 'stroke-width': gauge * scale,
       'stroke-linecap': 'butt', 'stroke-linejoin': 'round' }, ink);
   }
-  const outline = stroke(1.08, 'var(--wire-contour)');
+  const outline = stroke(geom.customWire ? 1 : 1.08, 'var(--wire-contour)');
   const body = stroke(.81, 'var(--wire-color)');
   const sheen = stroke(.32, 'var(--wire-sheen)');
   const glint = stroke(.14, 'url(#' + finish + ')');
@@ -584,8 +594,9 @@ function pathSVG(parent, className, bounds) {
     preserveAspectRatio: 'none', 'aria-hidden': 'true' }, parent);
 }
 
-function wirePath(svg, data, wire) {
-  for (const [size, stroke] of [[wire * 1.1, 'var(--wire-shadow)'], [wire * .7, 'var(--wire-color)'], [wire * .23, 'var(--wire-light)']]) {
+function wirePath(svg, data, geom) {
+  const wire = geom.wire;
+  for (const [size, stroke] of [[wire * (geom.customWire ? 1 : 1.1), 'var(--wire-shadow)'], [wire * .7, 'var(--wire-color)'], [wire * .23, 'var(--wire-light)']]) {
     svgElement('path', { d: data, fill: 'none', stroke, 'stroke-width': size, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }, svg);
   }
 }
@@ -593,7 +604,7 @@ function wirePath(svg, data, wire) {
 // Look straight along the pages at their bound edge. Only the wire extends
 // beyond the rectangular section of the book.
 let profileSerial = 0;
-function wireProfile(surface, geom, width, binding) {
+function wireProfile(surface, geom, width, binding, coverStock) {
   const { side, wire, rings, length, depth, rz } = geom;
   const half = depth / 2;
   const facing = side === 'right' ? -1 : 1;
@@ -660,17 +671,22 @@ function wireProfile(surface, geom, width, binding) {
   const grain = [];
   for (let i = 1; i < sheets; i++) grain.push('M' + round(i / sheets * depth - half) + ' 0v' + length);
   stroke(grain.join(''), 'color-mix(in srgb, ' + stock + ' 70%, #443f35)', Math.min(.18, depth / sheets * .19));
-  const boardWidth = Math.min(.65, depth * .10);
-  for (const x of [-half, half - boardWidth]) {
-    svgElement('rect', { x, y: 0, width: boardWidth, height: length, fill: board }, svg);
+  const colors = coverStock?.layers ?? [board];
+  let inset = 0;
+  for (const [index, fill] of colors.entries()) {
+    const ply = coverStock?.layerThicknessMm[index] ?? Math.min(.65, depth * .10);
+    for (const x of [-half + inset, half - inset - ply]) {
+      svgElement('rect', { class: 'wire-board-ply', x, y: 0, width: ply, height: length, fill }, svg);
+    }
+    inset += ply;
   }
   const wireFace = front.join('');
-  stroke(wireFace, 'var(--wire-shadow)', wire * 1.05);
+  stroke(wireFace, 'var(--wire-shadow)', geom.customWire ? wire : wire * 1.05);
   stroke(wireFace, 'url(#' + metal + ')', wire * .71);
   if (seams.length) stroke(seams.join(''), 'var(--wire-shadow)', wire * .22);
 }
 
-function shelfWire(surface, geom, [width, height], binding, layout, hasCuts) {
+function shelfWire(surface, geom, [width, height], binding, layout, hasCuts, coverStock) {
   const [minX, minY, maxX, maxY] = geom.rings.flat().reduce((bounds, { xyz: [x,y] }) =>
     [Math.min(bounds[0],x), Math.min(bounds[1],y), Math.max(bounds[2],x), Math.max(bounds[3],y)], [Infinity, Infinity, -Infinity, -Infinity]);
   const pad = Math.max(geom.wire, geom.radius);
@@ -717,8 +733,8 @@ function shelfWire(surface, geom, [width, height], binding, layout, hasCuts) {
       } else drawing = false;
     }
   }
-  wirePath(front, frontPath.join(''), geom.wire);
-  wireProfile(surface, geom, width, binding);
+  wirePath(front, frontPath.join(''), geom);
+  wireProfile(surface, geom, width, binding, coverStock);
 }
 
 const wireKeys = new WeakMap();
@@ -733,8 +749,13 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   const stock = !cards && book.coverStock;
   const boardPlies = stock && plyStops(stock.layers, stock.layerThicknessMm);
   surface.toggleAttribute('data-cover-stock', !!boardPlies);
-  if (boardPlies) surface.style.setProperty('--cover-plies', boardPlies);
-  else surface.style.removeProperty('--cover-plies');
+  if (boardPlies) {
+    surface.style.setProperty('--cover-plies', boardPlies);
+    surface.style.setProperty('--cover-depth-share', stockThickness(stock) / depth);
+  } else {
+    surface.style.removeProperty('--cover-plies');
+    surface.style.removeProperty('--cover-depth-share');
+  }
   const pages = book.pageCount ?? book.pages?.length ?? 0;
   const leaves = Math.max(1, leafCountForBook(book) || Math.ceil(pages / 2));
   const state = {
@@ -746,7 +767,12 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   const layout = hasSections || geometry?.leaves.some(leaf => leaf.width !== size[0] || leaf.height !== size[1] || leaf.top !== geometry.coverTop)
     ? geometry : null;
   setSaddleSpine(surface, book, details, size, depth, geometry);
-  setExposedSewing(surface, book, details, size, depth);
+  setExposedSewing(surface, book, details, size, depth - 2 * stockThickness(stock));
+  const spine = surface.querySelector('.spine, .shelf-spine');
+  for (const rim of spine.querySelectorAll(':scope > .open-board-cut')) rim.remove();
+  if (boardPlies && (book.bindingType === 'exposed-sewn' || model && hardware)) {
+    for (const side of ['back', 'front']) part('open-board-cut ' + side + '-cut', spine);
+  }
   if (model) {
     for (const cut of cuts) paintFace(surface.querySelector(':scope > .' + cut), cut, state);
     paintFace(surface.querySelector(':scope > .spine'), 'spine', { ...state, bands: null });
@@ -761,13 +787,13 @@ export function setBookSurfaces(surface, book, details, size, depth) {
     if (cards) surface.querySelector(':scope > .shelf-cuts')?.remove();
     else shelfEdges(surface, state);
     shelfLeaves(surface, layout, size);
-    const spine = surface.querySelector('.shelf-spine');
     paintFace(spine, 'spine', { ...state, bands: null });
   }
   const leafWidth = layout?.width ?? size[0];
   const hasShelfCuts = !model && !!surface.querySelector('.shelf-cuts');
   const wireKey = hardware ? JSON.stringify([book.bindingType, details.ringPlacement, details.ringCount,
-    details.ringDiameterMm, book.ringPositions, size, depth, leafWidth, layout?.height, layout?.coverTop, hasShelfCuts]) : null;
+    details.ringDiameterMm, book.bindingType === 'spiral' ? details.wireDiameterMm : null,
+    book.ringPositions, size, depth, leafWidth, layout?.height, layout?.coverTop, hasShelfCuts, !model && stock]) : null;
   if (hardware) surface.style.setProperty('--wire-color', details.ringColor);
   if (wireKeys.get(surface) !== wireKey) {
     wireViews.get(surface)?.();
@@ -777,13 +803,14 @@ export function setBookSurfaces(surface, book, details, size, depth) {
     if (hardware) {
       const wire = wireGeometry(book.bindingType, details, book.ringPositions, size, depth, 48);
       if (model) modelWire(surface, wire, size, book.bindingType);
-      else shelfWire(surface, wire, size, book.bindingType, layout, hasShelfCuts);
+      else shelfWire(surface, wire, size, book.bindingType, layout, hasShelfCuts, stock);
     }
     wireKeys.set(surface, wireKey);
   }
   const side = hardware && details.ringPlacement;
   const across = side === 'top' || side === 'bottom' ? size[1] : size[0];
-  const extra = hardware ? details.ringDiameterMm - punchInset(details.ringDiameterMm, across) + 1.7 : 0;
+  const wireMargin = book.bindingType === 'spiral' ? Math.max(1.7, details.wireDiameterMm ?? 0) : 1.7;
+  const extra = hardware ? details.ringDiameterMm - punchInset(details.ringDiameterMm, across) + wireMargin : 0;
   const left = side === 'left' ? -extra : 0;
   const right = Math.max(layout?.width ?? 0, size[0] + (side === 'right' ? extra : 0));
   const top = Math.min(-(layout?.coverTop ?? 0), side === 'top' ? -extra : 0);

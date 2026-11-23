@@ -25,6 +25,7 @@ export const mockupDetailFields = Object.freeze({
   threadColor: color('제본 실색', null),
   ringCount: { ...number('링 개수', 12, 1, 60), integer: true },
   ringDiameterMm: number('링 지름', 14, 4, 65, 0.1),
+  wireDiameterMm: { ...number('스프링 선재 굵기', null, 0.4, 5, 0.1), decimalPlaces: 1 },
   ringColor: color('링 색', '#686b70'),
   ringPlacement: { type: 'enum', label: '링 위치', default: 'left', choices: ['left', 'top', 'right', 'bottom'] },
 });
@@ -33,7 +34,8 @@ export function validMockupDetail(field, value) {
   if (value === null) return field.default === null;
   switch (field.type) {
     case 'number': return Number.isFinite(value) && value >= field.min && value <= field.max &&
-      (!field.integer || Number.isInteger(value));
+      (!field.integer || Number.isInteger(value)) &&
+      (field.decimalPlaces === undefined || Number.isInteger(value * 10 ** field.decimalPlaces));
     case 'color': return typeof value === 'string' && /^#[a-f\d]{6}$/i.test(value);
     case 'boolean': return typeof value === 'boolean';
     case 'enum': return field.choices.includes(value);

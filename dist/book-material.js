@@ -1,6 +1,6 @@
 import { resolveMockupDetails } from './mockup-options.js';
 import { setBookSurfaces } from './book-surfaces.js';
-import { trimSize } from './book-format.js';
+import { stockThickness, trimSize } from './book-format.js';
 export { trimSize };
 
 export const mockupViews = Object.freeze({
@@ -12,7 +12,7 @@ export function spineRatio(book) {
   const sheets = Math.max(1, Math.ceil((book.pageCount ?? book.pages?.length ?? 0) / 2));
   if (book.bookForm === 'cards') {
     const stock = book.cardStock;
-    const thickness = stock?.layerThicknessMm?.reduce((sum, value) => sum + value, 0);
+    const thickness = stockThickness(stock);
     const stack = thickness > 0 ? sheets * thickness : Math.max(.5, sheets * .22 * (stock?.layers?.length || 1));
     return (book.spineWidthMm ?? stack) / trimSize(book)[0];
   }
@@ -26,9 +26,12 @@ export function spineRatio(book) {
       break;
     case 'exposed-sewn': estimate = Math.max(3, paperWidth); break;
   }
-  const coverDepth = book.coverStock?.layerThicknessMm?.reduce((sum, ply) => sum + ply, 0);
-  if (coverDepth) estimate = Math.max(estimate, paperWidth + 2 * coverDepth);
-  return (book.spineWidthMm ?? estimate) / trimSize(book)[0];
+  const board = stockThickness(book.coverStock);
+  let depth = book.spineWidthMm ?? estimate;
+  // A measured thickness can reserve less paper than the estimate. Two actual
+  // boards still need room for their full plies and at least one sheet.
+  if (board) depth = Math.max(depth, 2 * board + (book.spineWidthMm == null ? paperWidth : .1));
+  return depth / trimSize(book)[0];
 }
 
 const luminance = ([r, g, b]) => .2126 * r + .7152 * g + .0722 * b;
@@ -367,8 +370,8 @@ function setPhysicalDetails(surface, book, width) {
   const height = trimSize(book)[1];
   const radius = Math.max(0, Math.min((cards ? book.cardStock?.cornerRadiusMm : d.cornerRadiusMm) ?? 0, width / 2, height / 2));
   const length = mm => 'calc(var(--material-width) * ' + mm / width + ')';
-  const coverDepth = cards ? null : book.coverStock?.layerThicknessMm?.reduce((sum, ply) => sum + ply, 0);
-  const board = coverDepth ?? d.boardThicknessMm;
+  const coverDepth = cards ? 0 : stockThickness(book.coverStock);
+  const board = coverDepth || d.boardThicknessMm;
   const depthMm = spineRatio(book) * width;
   const jointMm = hardcover ? Math.min(width * .1, 3 + (d.grooveWidthMm ?? 4)) : paperback ? Math.min(width * .07, 4.5) : 0;
   const properties = {

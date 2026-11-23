@@ -660,6 +660,49 @@ test('book finishing settings survive partial updates and can be reset without u
   assert.deepEqual(state.catalog.books[0].coverImages, legacyBook.coverImages);
 });
 
+test('spiral wire gauge survives administrator edits and publishing independently of the coil diameter', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hoho-wire-gauge-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const content = join(root, 'content');
+  await mkdir(join(content, 'assets/books/spiral'), { recursive: true });
+  const image = 'assets/books/spiral/front.webp';
+  await writeFile(join(content, image), await readFile(new URL('../dist/assets/forest-cover.webp', import.meta.url)));
+  const book = { ...legacyBook, id: 'spiral', bindingType: 'spiral', coverImages: { front: image },
+    pages: [{ imageSrc: image }], mockupDetails: { ringDiameterMm: 30, ringCount: 19 } };
+  await writeFile(join(content, 'catalog.json'), JSON.stringify({ books: [book], projects: [] }));
+  const bindings = { ...env, LOCAL_STORE: await createLocalStore(content, join(root, 'uploads')) };
+  const cookie = await session();
+  const saved = async () => (await (await request('/api/catalog', { cookie }, bindings)).json()).books[0];
+  const edit = async fields => request('/api/books', { method: 'POST', cookie, body: {
+    id: book.id, baseRevision: (await saved()).revision ?? null, registrationId: crypto.randomUUID(), ...fields,
+  } }, bindings);
+  async function publish() {
+    const output = join(root, 'public');
+    await buildPublic(fileURLToPath(new URL('../', import.meta.url)), { contentDir: content, outputDir: output });
+    const json = await readFile(join(output, 'catalog.json'), 'utf8');
+    const mocked = t.mock.method(globalThis, 'fetch', async () => new Response(json));
+    try { return (await loadBooks())[0]; } finally { mocked.mock.restore(); }
+  }
+  assert.equal((await publish()).mockupDetails.wireDiameterMm, null);
+  for (const width of [0.4, 3.2, 5]) {
+    assert.equal((await edit({ mockupDetails: { wireDiameterMm: width } })).status, 200);
+    assert.deepEqual((await saved()).mockupDetails, { ...book.mockupDetails, wireDiameterMm: width });
+  }
+  const published = await publish();
+  assert.equal(published.mockupDetails.wireDiameterMm, 5);
+  assert.equal(published.mockupDetails.ringDiameterMm, 30);
+  for (const invalid of [0, 0.3, 5.1, 1.25, '3']) {
+    assert.equal((await edit({ mockupDetails: { wireDiameterMm: invalid } })).status, 400);
+  }
+  assert.equal((await edit({ title: 'Retitled' })).status, 200);
+  assert.equal((await saved()).mockupDetails.wireDiameterMm, 5);
+  assert.equal((await edit({ mockupDetails: { wireDiameterMm: null } })).status, 200);
+  assert.deepEqual((await saved()).mockupDetails, book.mockupDetails);
+  const reset = await publish();
+  assert.equal(reset.mockupDetails.wireDiameterMm, null);
+  assert.equal(reset.mockupDetails.ringCount, 19);
+});
+
 test('bound cover plies and saddle booklets survive partial edits and publication without changing legacy books', async t => {
   const root = await mkdtemp(join(tmpdir(), 'hoho-cover-stock-'));
   t.after(() => rm(root, { recursive: true, force: true }));

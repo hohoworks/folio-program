@@ -31,6 +31,41 @@ test('successive turns share an endpoint along each supported binding edge', () 
   }
 });
 
+test('spiral gauge changes the tube and drill clearance without moving the coil or holes', () => {
+  for (const ringPlacement of ['left', 'top', 'right', 'bottom']) {
+    const book = { bindingType: 'spiral', trimSizeMm: [210, 148], mockupDetails: {
+      ringCount: 19, ringDiameterMm: 30, ringPlacement,
+    } };
+    const geometry = () => wireGeometry('spiral', resolveMockupDetails(book.mockupDetails), null, book.trimSizeMm, 22);
+    const automatic = geometry();
+    assert.equal(automatic.wire, 1.7);
+    book.mockupDetails.wireDiameterMm = null;
+    assert.deepEqual(geometry(), automatic);
+    for (const mm of [.4, 2.5, 5]) {
+      book.mockupDetails.wireDiameterMm = mm;
+      const coil = geometry();
+      assert.equal(coil.wire, mm);
+      assert.deepEqual(coil.rings, automatic.rings);
+      assert.deepEqual(coil.centers, automatic.centers);
+      assert.ok(coil.radius > mm / 2 && coil.radius <= coil.pitch / 2);
+      assert.equal(workWireProjection(book, 22).wire, mm);
+    }
+  }
+});
+
+test('impossible spiral gauges leave clearance for the paper and neighbouring turns; O-rings retain their gauge', () => {
+  const book = { bindingType: 'spiral', trimSizeMm: [36, 60], mockupDetails: {
+    ringCount: 60, ringDiameterMm: 4, wireDiameterMm: 5,
+  } };
+  const g = coverPunchLayout(book);
+  assert.equal(g.wire, .65);
+  assert.ok(g.radius * 2 < g.pitch && g.radius < g.reach);
+  book.bindingType = 'ring';
+  const before = workWireProjection(book, 12);
+  delete book.mockupDetails.wireDiameterMm;
+  assert.deepEqual(workWireProjection(book, 12), before);
+});
+
 test('independent rings close at their supplied positions and use the specified diameter', () => {
   const details = resolveMockupDetails({ringCount:2, ringDiameterMm:30, ringPlacement:'top'});
   const {rings} = wireGeometry('ring', details, [10,75], [200,150], 8);

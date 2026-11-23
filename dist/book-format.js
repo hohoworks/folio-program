@@ -15,6 +15,10 @@ const validLayerThickness = (values, layers) => Array.isArray(values) && values.
   values.every(mm => Number.isFinite(mm) && mm >= .01 && mm <= 20);
 
 // Ordered from the outer printed surface towards the inside of each cover.
+export function stockThickness(stock) {
+  return stock?.layerThicknessMm?.reduce((sum, mm) => sum + mm, 0) ?? 0;
+}
+
 export function validCoverStock(stock) {
   return record(stock) && only(stock, ['layers', 'layerThicknessMm']) &&
     validLayers(stock.layers) && validLayerThickness(stock.layerThicknessMm, stock.layers);
