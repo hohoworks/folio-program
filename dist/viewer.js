@@ -50,7 +50,7 @@ const languageStorageKey = 'folio-language';
 const messages = {
   ko: {
     home: '홈', menu: '주 메뉴', read: '읽기', startOver: '처음부터 읽기', pageNumber: '이동할 쪽수', jump: '이동', cover: '표지',
-    previous: '← 이전', next: '다음 →', previousPage: '이전 쪽', nextPage: '다음 쪽',
+    previous: '← 이전', next: '다음 →', previousBook: '← 이전 책', nextBook: '다음 책 →', previousPage: '이전 쪽', nextPage: '다음 쪽',
     previousSpread: '이전 펼침면', nextSpread: '다음 펼침면', backCover: '표지로 돌아가기',
     backShelf: '← 책장', backProject: '← 목록으로 돌아가기', viewer: '책 뷰어', coverView: '3D 표지',
     bookNavigation: '책 탐색', projectNavigation: '작업 탐색', contact: '연락처', email: '이메일', instagram: '인스타그램',
@@ -63,7 +63,7 @@ const messages = {
   },
   en: {
     home: 'Home', menu: 'Main navigation', read: 'Read', startOver: 'Read from the start', pageNumber: 'Page number', jump: 'Go', cover: 'Cover',
-    previous: '← Previous', next: 'Next →', previousPage: 'Previous page', nextPage: 'Next page',
+    previous: '← Previous', next: 'Next →', previousBook: '← Previous book', nextBook: 'Next book →', previousPage: 'Previous page', nextPage: 'Next page',
     previousSpread: 'Previous spread', nextSpread: 'Next spread', backCover: 'Back to cover',
     backShelf: '← Book shelf', backProject: '← Back to projects', viewer: 'Book viewer', coverView: '3D cover',
     bookNavigation: 'Book navigation', projectNavigation: 'Project navigation', contact: 'Contact', email: 'Email', instagram: 'Instagram',
@@ -847,6 +847,19 @@ if (locale === 'en' && !new URL(location.href).searchParams.has('lang')) {
 }
 let bookLinks;
 const indexLinks = new Map();
+const shelfPicked = $('shelf-picked');
+
+function identifyShelfPreview(id) {
+  const index = books.findIndex(book => book.id === id);
+  if (index < 0) return;
+  indexLinks.get(shelfPicked.dataset.book)?.removeAttribute('aria-current');
+  indexLinks.get(id)?.setAttribute('aria-current', 'true');
+  shelfPicked.dataset.book = id;
+  shelfPicked.href = '#book/' + id;
+  shelfPicked.textContent = itemCopy(books[index]).title;
+  $('shelf-prev').disabled = index === 0;
+  $('shelf-next').disabled = index === books.length - 1;
+}
 
 function setShelfLabels(book, title) {
   const indexLink = indexLinks.get(book.id);
@@ -854,10 +867,14 @@ function setShelfLabels(book, title) {
   indexLink.title = title;
   indexLink.lang = titleLanguage(title);
   indexLink.querySelector('.index-title').textContent = title;
-  const shelfLink = bookLinks.get(book.id);
+  const shelfLink = bookLinks.links.get(book.id);
   shelfLink.setAttribute('aria-label', title);
   shelfLink.lang = titleLanguage(title);
   shelfLink.querySelector('.shelf-spine').lang = titleLanguage(book.title);
+  if (shelfPicked.dataset.book === book.id) {
+    indexLink.setAttribute('aria-current', 'true');
+    shelfPicked.textContent = title;
+  }
 }
 
 function renderShelf() {
@@ -866,10 +883,14 @@ function renderShelf() {
     addAssetImage,
     addCoverArt: addShelfThumbnail,
     reducedMotion,
+    onPreview: identifyShelfPreview,
     select(book, source) {
       enterBook(book, '#bookshelf', source);
     },
   });
+  $('shelf-picker').hidden = books.length < 2;
+  $('shelf-prev').addEventListener('click', () => bookLinks.step(-1));
+  $('shelf-next').addEventListener('click', () => bookLinks.step(1));
   const indexSizes = books.map(trimSize);
   bookIndex.style.setProperty('--tallest-cover-mm', Math.max(1, ...indexSizes.map(size => size[1])));
   bookIndex.style.setProperty('--widest-cover-mm', Math.max(1, ...indexSizes.map(size => size[0])));
@@ -885,7 +906,7 @@ function renderShelf() {
     link.addEventListener('click', event => {
       if (!plainClick(event)) return;
       event.preventDefault();
-      bookLinks.get(book.id).click();
+      bookLinks.pick(book.id);
     });
     const jacket = appendText(link, 'span', 'index-jacket cover-art', '');
     jacket.setAttribute('aria-hidden', 'true');
@@ -1363,6 +1384,9 @@ function refreshLocale() {
   $('projects-title').lang = locale;
   $('library-title').textContent = t('bookshelf');
   $('library-title').lang = locale;
+  $('shelf-picker').setAttribute('aria-label', t('bookNavigation'));
+  $('shelf-prev').textContent = t('previousBook');
+  $('shelf-next').textContent = t('nextBook');
   const aboutLayout = aboutView.querySelector('.about-layout');
   aboutLayout.prepend(aboutLayout.querySelector('.intro-column[lang="' + locale + '"]'));
   aboutHeading.textContent = locale === 'en' ? translated(englishAbout.heading, 'About') : site.about.heading;

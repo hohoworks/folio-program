@@ -1,9 +1,9 @@
 import { titleLanguage } from './title-language.js';
 import { setBookMaterial, trimSize } from './book-material.js';
 
-const hoverDelay = 105;
-const revealDelay = 420;
-export function createShelf(element, books, { addAssetImage, addCoverArt, select, reducedMotion }) {
+const hoverDelay = 135;
+const turnDuration = 460;
+export function createShelf(element, books, { addAssetImage, addCoverArt, select, onPreview, reducedMotion }) {
   const links = new Map();
   let tallestCover = 1;
   let widestPaint = 1;
@@ -11,7 +11,8 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
   let preview;
   let previewStarted = -Infinity;
   let hoverTimer;
-  let selectionTimer;
+  let pressed;
+  let hoverAnchor;
   let pointer;
   let hoverLink;
   let centerFrame = 0;
@@ -64,10 +65,13 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     followPreview = true;
     if (preview !== link) {
       preview?.classList.remove('is-preview');
+      preview?.removeAttribute('aria-current');
       link.classList.add('is-preview');
+      link.setAttribute('aria-current', 'true');
       preview = link;
       previewStarted = performance.now();
       fitRibbon();
+      onPreview(link.dataset.book);
     }
     centerPreview();
   }
@@ -76,17 +80,51 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     return !reducedMotion.matches && typeof element.animate === 'function';
   }
 
-  function openBook(book, cover) {
-    if (element.closest('[hidden]')) return;
-    select(book, canAnimate() ? cover.getBoundingClientRect() : null);
+  function resetHover() {
+    clearTimeout(hoverTimer);
+    hoverLink = undefined;
+    hoverAnchor = undefined;
+    pointer = undefined;
   }
 
-  for (const book of books) {
+  function activate(link, open) {
+    if (!link || element.closest('[hidden]')) return;
+    resetHover();
+    showPreview(link);
+    if (open) {
+      const book = books[Number(link.dataset.shelfIndex)];
+      const cover = link.querySelector('.shelf-cover');
+      select(book, canAnimate() ? cover.getBoundingClientRect() : null);
+    }
+  }
+
+  // Divide gaps by distance to the painted books. Paper-thin spines can be
+  // selected from either side without enlarging them or covering a neighbour.
+  function hitBook(x, y, slop) {
+    let nearest;
+    let distance = slop;
+    for (const link of links.values()) {
+      const r = link.getBoundingClientRect();
+      if (y < r.top - 2 || y > r.bottom + 2) continue;
+      const d = Math.max(r.left - x, x - r.right, 0);
+      if (d === 0) return link;
+      if (d <= distance) { distance = d; nearest = link; }
+    }
+    return nearest;
+  }
+
+  function holdsPointer(x, y) {
+    const turning = performance.now() - previewStarted < turnDuration + 180;
+    return hoverAnchor && Math.hypot(x - hoverAnchor.x, y - hoverAnchor.y) < (turning ? 10 : 8);
+  }
+
+  for (const [index, book] of books.entries()) {
     const link = document.createElement('a');
     const spine = document.createElement('span');
     const cover = document.createElement('span');
     link.className = 'shelf-book';
     link.dataset.book = book.id;
+    link.dataset.shelfIndex = index;
     link.dataset.binding = book.bindingType ?? 'paperback';
     link.href = '#book/' + book.id;
     link.setAttribute('aria-label', book.title);
@@ -121,29 +159,16 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     }
 
     link.addEventListener('focus', () => {
-      clearTimeout(hoverTimer);
+      // Pointer focus happens between down and up. A book must not move away
+      // before that gesture has actually selected it.
+      if (pressed && !pressed.released) return;
+      resetHover();
       showPreview(link);
-    });
-    link.addEventListener('click', (event) => {
-      if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      event.preventDefault();
-      clearTimeout(hoverTimer);
-      clearTimeout(selectionTimer);
-      selectionTimer = undefined;
-      showPreview(link);
-      const wait = canAnimate() ? Math.max(0, revealDelay - (performance.now() - previewStarted)) : 0;
-      if (!wait) {
-        openBook(book, cover);
-      } else {
-        selectionTimer = setTimeout(() => {
-          selectionTimer = undefined;
-          openBook(book, cover);
-        }, wait);
-      }
     });
     if (!preview) {
       preview = link;
       link.classList.add('is-preview');
+      link.setAttribute('aria-current', 'true');
     }
     element.append(link);
     sizeObserver.observe(link);
@@ -157,29 +182,69 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
   element.style.setProperty('--tallest-paint-mm', tallestPaint);
   fitRibbon();
   centerPreview();
-  // Scrolling and opening books move links under a stationary pointer. Only
-  // actual pointer movement should start a different preview.
+  if (preview) onPreview(preview.dataset.book);
+
   element.addEventListener('pointermove', event => {
-    if (event.pointerType === 'touch' || selectionTimer !== undefined) return;
-    if (pointer && pointer.x === event.clientX && pointer.y === event.clientY) return;
-    pointer = { x: event.clientX, y: event.clientY };
-    const link = event.target.closest('.shelf-book');
+    const x = event.clientX, y = event.clientY;
+    if (pressed && !pressed.released && event.pointerType === 'mouse' && !event.buttons) pressed = undefined;
+    if (pressed && !pressed.released) {
+      if (Math.hypot(x - pressed.x, y - pressed.y) > 8) pressed.dragged = true;
+      return;
+    }
+    if (event.pointerType === 'touch' || event.buttons) return;
+    if (pointer && pointer.x === x && pointer.y === y) return;
+    pointer = { x, y };
+    if (holdsPointer(x, y)) return;
+    hoverAnchor = undefined;
+    const link = hitBook(x, y, 8);
     if (hoverLink === link) return;
+    clearTimeout(hoverTimer);
     hoverLink = link;
-    clearTimeout(hoverTimer);
-    if (link && link !== preview) hoverTimer = setTimeout(() => showPreview(link), reducedMotion.matches ? 0 : hoverDelay);
+    if (link && link !== preview) hoverTimer = setTimeout(() => {
+      hoverAnchor = { ...pointer, automatic: true };
+      showPreview(link);
+    }, hoverDelay);
   });
-  element.addEventListener('pointerleave', () => {
-    clearTimeout(hoverTimer);
-    hoverLink = undefined;
-    pointer = undefined;
-  });
-  function stopFollowing() {
-    clearTimeout(hoverTimer);
+  element.addEventListener('pointerleave', resetHover);
+  element.addEventListener('pointerdown', event => {
+    const touch = event.pointerType === 'touch';
+    const hit = hitBook(event.clientX, event.clientY, touch ? 16 : 8);
+    // The original spine may already have slid away from a stationary pointer.
+    // Keep its identity even if a neighbour now sits underneath.
+    const held = !touch && holdsPointer(event.clientX, event.clientY);
+    const link = held ? preview : hit;
+    const unfolding = held && hoverAnchor.automatic && (hit !== preview || performance.now() - previewStarted < turnDuration);
+    pressed = { id: event.pointerId, link, open: link === preview && !unfolding, x: event.clientX, y: event.clientY };
+    resetHover();
     followPreview = false;
     previousFrame = 0;
-  }
-  element.addEventListener('wheel', stopFollowing, { passive: true });
-  element.addEventListener('pointerdown', stopFollowing, { passive: true });
-  return links;
+  });
+  window.addEventListener('pointerup', event => {
+    if (pressed?.id === event.pointerId) pressed.released = true;
+  });
+  element.addEventListener('pointercancel', () => { pressed = undefined; });
+  element.addEventListener('click', event => {
+    const start = event.detail ? pressed : undefined;
+    pressed = undefined;
+    if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    const link = start ? start.link : event.target.closest('.shelf-book');
+    if (!link && !start) return;
+    event.preventDefault();
+    if (start?.dragged) return;
+    activate(link, start ? start.open : true);
+    if (start && !start.open && event.pointerType !== 'touch') {
+      pointer = hoverAnchor = { x: start.x, y: start.y };
+    }
+  });
+  element.addEventListener('wheel', () => {
+    resetHover();
+    if (pressed) pressed.dragged = true;
+    followPreview = false;
+    previousFrame = 0;
+  }, { passive: true });
+  return {
+    links,
+    pick(id) { const link = links.get(id); activate(link, link === preview); },
+    step(direction) { const link = direction < 0 ? preview?.previousElementSibling : preview?.nextElementSibling; activate(link, false); },
+  };
 }
