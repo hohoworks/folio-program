@@ -223,11 +223,12 @@
                   </fieldset>
                   <fieldset class="mockup-group" data-bindings="saddle-stitch" hidden disabled>
                     <legend>중철 방식</legend>
-                    <label for="stitch-type">묶는 재료</label><select id="stitch-type"><option value="wire">철사</option><option value="thread">실</option></select>
-                    <fieldset class="fields two material-colors" data-stitch="wire" aria-label="철사 설정">
+                    <label for="stitch-type">묶는 재료</label><select id="stitch-type"><option value="wire">일반 철심</option><option value="loop">고리 철심</option><option value="thread">미싱실</option></select>
+                    <fieldset class="fields two material-colors" data-stitch="wire loop" aria-label="철심 설정">
                       <div><label for="staple-count">철심 개수</label><input id="staple-count" type="number" step="1" inputmode="numeric"></div>
-                      <div><label for="staple-thickness-mm">철사 굵기 (mm)</label><input id="staple-thickness-mm" type="number" step="any" inputmode="decimal"></div>
-                      <div><label for="staple-color">철사 색</label><input id="staple-color" type="color"></div>
+                      <div><label for="staple-inset-percent">양 끝 여백 (%)</label><input id="staple-inset-percent" type="number" step="any" inputmode="decimal"></div>
+                      <div><label for="staple-thickness-mm">철심 굵기 (mm)</label><input id="staple-thickness-mm" type="number" step="any" inputmode="decimal"></div>
+                      <div><label for="staple-color">철심 색</label><input id="staple-color" type="color"></div>
                     </fieldset>
                   </fieldset>
                   <fieldset class="mockup-group material-colors" data-bindings="exposed-sewn saddle-stitch" data-stitch="thread" hidden disabled>
@@ -240,6 +241,16 @@
                     <label for="thread-color">실 색</label><input id="thread-color" type="color" value="#9b8261"><label class="check-label"><input id="auto-thread-color" type="checkbox" checked> 자동</label>
                   </fieldset>
                 </details></fieldset>
+                <fieldset id="saddle-section-options" class="mockup-group" hidden disabled>
+                  <legend>중철 소책자 합본</legend>
+                  <label class="check-label"><input id="saddle-sections-enabled" type="checkbox" aria-controls="saddle-section-fields"> 여러 권을 순서대로 묶기</label>
+                  <fieldset id="saddle-section-fields" hidden disabled aria-label="소책자 구성">
+                    <p class="help">전체 내지를 앞에서부터 권별 쪽수로 나눕니다. 가로·세로를 비우면 책의 기본 판형을 사용합니다.</p>
+                    <div id="saddle-section-list"></div>
+                    <button type="button" id="add-saddle-section" class="text-button">소책자 추가 +</button>
+                    <output class="help" id="saddle-section-total"></output>
+                  </fieldset>
+                </fieldset>
                 <details class="construction-section" id="edge-options"><summary>책배·머리·꼬리 단면</summary>
                   <div id="edge-face-fields"></div>
                   <fieldset class="mockup-group"><legend>색지 구간</legend>
@@ -247,14 +258,28 @@
                     <div id="edge-bands"></div><button class="text-button" type="button" id="add-edge-band">색지 구간 추가 +</button>
                   </fieldset>
                 </details>
+                <fieldset data-bound class="mockup-group" id="cover-stock">
+                  <legend>표지 합지</legend>
+                  <label class="check-label"><input type="checkbox" id="cover-stock-enabled" aria-controls="cover-stock-fields"> 앞·뒤 표지에 합지 사용</label>
+                  <fieldset id="cover-stock-fields" hidden disabled aria-label="표지 합지 설정">
+                    <label for="cover-layer-count">표지 한 장의 층 수</label><select id="cover-layer-count"></select>
+                    <p class="help">앞표지와 뒤표지에 같은 구성을 적용합니다. 1층은 각 표지의 바깥면입니다.</p>
+                    <div id="cover-layers" class="stock-layers"></div>
+                    <button type="button" class="text-button" id="add-cover-layer">합지 층 추가 +</button>
+                    <output class="help" id="cover-thickness-summary"></output>
+                    <div id="cover-section-preview" class="stock-section-preview" aria-hidden="true"></div>
+                  </fieldset>
+                </fieldset>
                 <fieldset data-cards hidden disabled class="mockup-group" id="card-stock">
                   <legend>카드 용지</legend>
                   <label for="card-corner">네 모서리 둥글기 (mm)</label><input type="number" id="card-corner" min="0" max="100" step="any" value="0">
+                  <label for="card-layer-count">카드 한 장의 층 수</label><select id="card-layer-count"></select>
                   <label for="card-thickness-mode">합지 두께</label>
                   <select id="card-thickness-mode"><option value="auto">같은 두께로 자동 배분</option><option value="measured">층별 두께 직접 입력</option></select>
-                  <p class="help">앞면부터 순서대로 각 층의 색을 지정하세요. 묶음 전체 두께를 입력하면 각 층의 두께 비율을 그 값에 맞춥니다.</p>
-                  <div id="card-layers"></div><button type="button" class="text-button" id="add-card-layer">합지 층 추가 +</button>
+                  <p class="help">1층은 카드의 앞면입니다. 정한 순서대로 카드 한 장의 단면에 보입니다.</p>
+                  <div id="card-layers" class="stock-layers"></div><button type="button" class="text-button" id="add-card-layer">합지 층 추가 +</button>
                   <output class="help" id="card-thickness-summary"></output>
+                  <div id="card-section-preview" class="stock-section-preview" aria-hidden="true"></div>
                 </fieldset>
                 </div>
                 <div id="mockup-preview" role="group" aria-label="책 목업 미리보기"></div>

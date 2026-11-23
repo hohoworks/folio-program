@@ -442,7 +442,8 @@ h1:focus { outline: none; }
 .head { box-shadow: inset 0 1px 1px #695d3f38; }
 .tail { box-shadow: inset 0 0 5px #594a3840; }
 .case-board { display: none; }
-.stage[data-binding="hardcover"] .case-board {
+.stage[data-binding="hardcover"] .case-board,
+.book-model[data-cover-stock] .case-board {
   display: block;
   position: absolute;
   inset: 0;
@@ -471,14 +472,18 @@ h1:focus { outline: none; }
 .case-board i { inset-inline: 0; height: calc(var(--board) + var(--seam-lap) * 2); }
 .board-head { top: calc(var(--board) / -2 - var(--seam-lap)); transform: rotateX(90deg); }
 .board-tail { bottom: calc(var(--board) / -2 - var(--seam-lap)); transform: rotateX(-90deg); }
-.stage[data-binding="hardcover"] .fore {
+.stage[data-binding="hardcover"] .fore,
+.book-model[data-cover-stock] .fore {
   width: var(--block);
   inset-block: var(--lip);
   right: calc(var(--lip) - var(--block) / 2);
 }
-.stage[data-binding="hardcover"] :is(.head, .tail) { height: var(--block); right: var(--lip); }
-.stage[data-binding="hardcover"] .head { top: calc(var(--lip) - var(--block) / 2); }
-.stage[data-binding="hardcover"] .tail { bottom: calc(var(--lip) - var(--block) / 2); }
+.stage[data-binding="hardcover"] :is(.head, .tail),
+.book-model[data-cover-stock] :is(.head, .tail) { height: var(--block); right: var(--lip); }
+.stage[data-binding="hardcover"] .head,
+.book-model[data-cover-stock] .head { top: calc(var(--lip) - var(--block) / 2); }
+.stage[data-binding="hardcover"] .tail,
+.book-model[data-cover-stock] .tail { bottom: calc(var(--lip) - var(--block) / 2); }
 .book-model :is(.front, .back)::after, .shelf-cover::after {
   content: "";
   position: absolute;
@@ -829,22 +834,6 @@ h1:focus { outline: none; }
     var(--case-color, #e9e5da);
   color: transparent;
 }
-.binding-fasteners {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 1;
-}
-.binding-fasteners i {
-  position: absolute;
-  left: 50%;
-  width: min(80%, calc(.45px + var(--staple-width)));
-  height: 5%;
-  transform: translate(-50%, -50%);
-  border-radius: 50% / 10%;
-  background: linear-gradient(90deg, color-mix(in srgb, var(--staple-color) 64%, black), color-mix(in srgb, var(--staple-color) 62%, white) 44%, var(--staple-color) 71%, color-mix(in srgb, var(--staple-color) 55%, black));
-  box-shadow: .4px .5px 1px #27231888;
-}
 [data-binding="exposed-sewn"] :is(.spine, .shelf-spine):not(.artwork) {
   background: linear-gradient(90deg, #655b4e3b, transparent 12% 84%, #58493733),
     url("./assets/sewn-signatures.webp") left top / var(--sewing-repeat, 35%) var(--sewing-tile-height, 40%) repeat, #dfd9c9;
@@ -934,7 +923,8 @@ h1:focus { outline: none; }
   --strip-color: repeating-linear-gradient(0deg, var(--paper-color, #efede4) 0 1px, color-mix(in srgb, var(--paper-color, #efede4) 86%, #4d4231) 1px 1.5px);
   --strip-z: 0px;
 }
-.stage[data-binding="hardcover"] .corner-strip.edge-paper { --strip-height: var(--block); }
+.stage[data-binding="hardcover"] .corner-strip.edge-paper,
+.book-model[data-cover-stock] .corner-strip.edge-paper { --strip-height: var(--block); }
 .corner-strip:is(.front-rim, .back-rim) {
   --strip-inset: 0px;
   --strip-height: calc(var(--board) + .5px);
@@ -997,16 +987,6 @@ h1:focus { outline: none; }
   background: linear-gradient(90deg, #261b144f, #fff3 30%, transparent 55%, #261b1452);
 }
 
-[data-saddle-thread] :is(.spine, .shelf-spine)::before {
-  content: "";
-  position: absolute;
-  z-index: 1;
-  inset: 12% auto 12% 50%;
-  width: min(70%, max(1px, calc(var(--material-width) * .008)));
-  transform: translateX(-50%);
-  background: repeating-linear-gradient(118deg, #fff2 0 .8px, transparent .8px 1.7px), var(--thread-color, #caa87b);
-  mask: repeating-linear-gradient(to bottom, black 0 7%, transparent 7% 11%);
-}
 [data-colored-sewing] :is(.spine, .shelf-spine)::before {
   content: "";
   position: absolute;

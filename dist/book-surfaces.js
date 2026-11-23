@@ -1,4 +1,5 @@
-import { leafCountForBook, leafGeometry, trimSize } from './book-format.js';
+import { bookLeafGeometry, leafCountForBook, trimSize } from './book-format.js';
+import { setSaddleSpine } from './saddle-material.js';
 import { resolveMockupDetails } from './mockup-options.js';
 
 const cuts = ['fore', 'head', 'tail'];
@@ -66,18 +67,17 @@ export function bandStops(bands, pageCount, start = 0, end = 1) {
   return bandRunStops(bandRuns(bands, pageCount), pageCount, start, end, 'var(--paper-color, #efede4)');
 }
 
-function plyGradient(layers, thicknesses, count, start, end, angle) {
+// A laminated edge is a single cross-section. Its bands fill the full depth,
+// regardless of how many page images or cards the publication contains.
+function plyStops(layers, thicknesses) {
   if (!layers?.length || !layers.every(isColor)) return '';
-  const period = 1 / (count * (end - start));
-  // Slice boundaries represent whole sheets. Each sheet repeats the card's ply sequence.
   const total = thicknesses?.reduce((sum, value) => sum + value, 0) ?? layers.length;
   let depth = 0;
-  const stops = layers.map((color, index) => {
+  return layers.map((color, index) => {
     const from = depth;
     depth += thicknesses?.[index] ?? 1;
-    return color + ' ' + percent(period * from / total) + ' ' + percent(period * depth / total);
-  });
-  return 'repeating-linear-gradient(' + angle + ', ' + stops.join(', ') + ')';
+    return color + ' ' + percent(from / total) + ' ' + percent(depth / total);
+  }).join(', ');
 }
 
 export function scanWindow(cut, start, end) {
@@ -100,21 +100,25 @@ function paintFace(face, cut, state, start = 0, end = 1) {
   face.querySelector(':scope > .edge-scan')?.remove();
   face.style.removeProperty('--cut-paint');
   face.removeAttribute('data-cut');
+  const angle = direction[cut];
+  if (state.plies) {
+    face.dataset.cut = 'laminated';
+    face.style.setProperty('--cut-paint', 'linear-gradient(' + angle + ', ' + state.plies + ')');
+    return;
+  }
   const treatment = state.treatments?.[cut];
   if (treatment?.mode === 'scan' && treatment.imageSrc) {
     face.dataset.cut = 'scan';
     paintScan(face, cut, treatment, start, end);
     return;
   }
-  const angle = direction[cut];
   const color = treatment?.mode === 'solid' && isColor(treatment.color) && treatment.color;
   let paint;
   if (color) {
     paint = 'linear-gradient(' + color + ', ' + color + ')';
   } else {
-    const plies = plyGradient(state.layers, state.thicknesses, state.leaves, start, end, angle);
-    const bands = bandRunStops(state.bands, state.pages, start, end, plies ? 'transparent' : 'var(--paper-color, #efede4)');
-    paint = [bands && 'linear-gradient(' + angle + ', ' + bands + ')', plies].filter(Boolean).join(', ');
+    const bands = bandRunStops(state.bands, state.pages, start, end, 'var(--paper-color, #efede4)');
+    if (bands) paint = 'linear-gradient(' + angle + ', ' + bands + ')';
   }
   if (paint) {
     face.dataset.cut = 'colored';
@@ -133,8 +137,15 @@ function variableLeaves(surface, size, state, layout) {
     const leaf = layout.leaves[first];
     let after = first + 1;
     while (after < layout.leaves.length && layout.leaves[after].width === leaf.width &&
-      layout.leaves[after].height === leaf.height && layout.leaves[after].top === leaf.top) after++;
+      layout.leaves[after].height === leaf.height && layout.leaves[after].top === leaf.top &&
+      layout.leaves[after].sectionIndex === leaf.sectionIndex) after++;
     const slice = part('leaf-slice', block);
+    if (leaf.sectionIndex != null) {
+      const section = layout.sections[leaf.sectionIndex];
+      slice.style.setProperty('--section-cover', section.color ?? 'var(--case-color, var(--paper-color, #efede4))');
+      slice.classList.toggle('section-front', first === 0 || layout.leaves[first - 1].sectionIndex !== leaf.sectionIndex);
+      slice.classList.toggle('section-back', after === layout.leaves.length || layout.leaves[after].sectionIndex !== leaf.sectionIndex);
+    }
     const start = first / state.leaves, end = after / state.leaves;
     slice.style.width = percent(leaf.width / size[0]);
     slice.style.height = percent(leaf.height / size[1]);
@@ -152,22 +163,23 @@ function shelfLeaves(surface, layout, size) {
   if (!layout) return;
   const outline = pathSVG(surface, 'shelf-leaves', [0, 0, layout.width, layout.height]);
   const wire = surface.hasAttribute('data-wire-bound');
-  outline.style.top = wire ? 'var(--shelf-wire-leaf-top)' : percent(-layout.coverTop / size[1]);
+  const compilation = surface.hasAttribute('data-saddle-sections');
+  outline.style.top = wire ? 'var(--shelf-wire-leaf-top)' : compilation ? '0' : percent(-layout.coverTop / size[1]);
   outline.style.width = wire ? 'var(--shelf-wire-leaves)' : mm(layout.width, size[0]);
-  outline.style.height = wire ? 'var(--shelf-wire-leaf-height)' : percent(layout.height / size[1]);
+  outline.style.height = wire ? 'var(--shelf-wire-leaf-height)' : compilation ? '100%' : percent(layout.height / size[1]);
   surface.style.setProperty('--shelf-leaf-width', mm(layout.width, size[0]));
   surface.insertBefore(outline, surface.querySelector('.shelf-cover'));
   for (let i = layout.leaves.length - 1; i >= 0; i--) {
     const leaf = layout.leaves[i], next = layout.leaves[i+1];
     if (next && next.top === leaf.top && next.height === leaf.height && next.width === leaf.width) continue;
     svgElement('rect', { x: 0, y: leaf.top, width: leaf.width, height: leaf.height,
-      fill: 'var(--paper-color, #efede4)', stroke: '#a7a399', 'stroke-width': .2 }, outline);
+      fill: leaf.color ?? 'var(--paper-color, #efede4)', stroke: '#a7a399', 'stroke-width': .2 }, outline);
   }
 }
 
 function shelfEdges(surface, state) {
   surface.querySelector(':scope > .shelf-cuts')?.remove();
-  if (!state.layers?.length && !state.bands?.length && !cuts.some(cut => ['solid', 'scan'].includes(state.treatments?.[cut]?.mode))) return;
+  if (!state.plies && !state.bands?.length && !cuts.some(cut => ['solid', 'scan'].includes(state.treatments?.[cut]?.mode))) return;
   const group = part('shelf-cuts', surface);
   for (const cut of cuts) paintFace(part('shelf-cut shelf-' + cut, group), cut, state);
 }
@@ -268,6 +280,29 @@ function visibleWirePath(curves, camera, bounds, project) {
   return data.join('');
 }
 
+// The two tips of a helix end at the paper surface. An untrimmed turn starts
+// halfway through the stock on the top cut, where a round stroke cap makes
+// an isolated dot visible from above (and at the opposite end from below).
+export function modelWireCurves(geometry, binding) {
+  if (binding !== 'spiral') return geometry.rings.map(loop => loop.map(point => point.xyz));
+  const points = geometry.rings.flatMap((turn, index) => index ? turn.slice(1) : turn);
+  const halfDepth = geometry.depth / 2;
+  const outside = ({local: [x, , z]}) => x < 0 || Math.abs(z) > halfDepth;
+  const first = points.findIndex(outside);
+  const last = points.findLastIndex(outside);
+  if (first < 1 || last + 1 >= points.length) return [points.map(point => point.xyz)];
+  function surfaceExit(a, b) {
+    const [x, , z] = a.local;
+    const [nextX, , nextZ] = b.local;
+    const atEdge = nextX < 0 ? x / (x - nextX) : 1;
+    const atCover = Math.abs(nextZ) > halfDepth ? (Math.sign(nextZ) * halfDepth - z) / (nextZ - z) : 1;
+    const t = Math.min(atEdge, atCover);
+    return a.xyz.map((v, axis) => v + t * (b.xyz[axis] - v));
+  }
+  return [[surfaceExit(points[first - 1], points[first]), ...points.slice(first, last + 1).map(p => p.xyz),
+    surfaceExit(points[last + 1], points[last])]];
+}
+
 const wireViews = new WeakMap();
 function modelWire(surface, geom, [width, height], binding) {
   const mesh = part('model-hardware', surface);
@@ -295,8 +330,7 @@ function modelWire(surface, geom, [width, height], binding) {
       transform: 'translate(0 ' + round(offset * geom.wire) + ')',
     }, ink));
   }
-  const rings = geom.rings.map(loop => loop.map(vertex => vertex.xyz));
-  const curves = binding === 'spiral' ? [rings.flatMap((turn, index) => index ? turn.slice(1) : turn)] : rings;
+  const curves = modelWireCurves(geom, binding);
   const bounds = [[0, width], [0, height], [-geom.depth / 2, geom.depth / 2]];
   let pending = 0, previous = '';
 
@@ -497,15 +531,22 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   stage.dataset.binding = cards ? 'cards' : book.bindingType ?? 'paperback';
   surface.toggleAttribute('data-card-stock', cards);
   surface.toggleAttribute('data-wire-bound', hardware);
+  const stock = !cards && book.coverStock;
+  const boardPlies = stock && plyStops(stock.layers, stock.layerThicknessMm);
+  surface.toggleAttribute('data-cover-stock', !!boardPlies);
+  if (boardPlies) surface.style.setProperty('--cover-plies', boardPlies);
+  else surface.style.removeProperty('--cover-plies');
   const pages = book.pageCount ?? book.pages?.length ?? 0;
   const leaves = Math.max(1, leafCountForBook(book) || Math.ceil(pages / 2));
   const state = {
     treatments: book.edgeTreatments, bands: bandRuns(book.edgeBands, pages), pages, leaves,
-    layers: cards && book.cardStock?.layers, thicknesses: cards && book.cardStock?.layerThicknessMm,
+    plies: cards ? plyStops(book.cardStock?.layers, book.cardStock?.layerThicknessMm) : '',
   };
-  const geometry = book.leafLayout && leafGeometry(book.leafLayout, leaves, size, book.pages);
-  const layout = geometry?.leaves.some(leaf => leaf.width !== size[0] || leaf.height !== size[1] || leaf.top !== geometry.coverTop)
+  const geometry = cards ? null : bookLeafGeometry(book);
+  const hasSections = Boolean(geometry?.sections?.length);
+  const layout = hasSections || geometry?.leaves.some(leaf => leaf.width !== size[0] || leaf.height !== size[1] || leaf.top !== geometry.coverTop)
     ? geometry : null;
+  setSaddleSpine(surface, book, details, size, depth, geometry);
   if (model) {
     for (const cut of cuts) paintFace(surface.querySelector(':scope > .' + cut), cut, state);
     paintFace(surface.querySelector(':scope > .spine'), 'spine', { ...state, bands: null });
@@ -515,7 +556,10 @@ export function setBookSurfaces(surface, book, details, size, depth) {
       paintFace(edge, cut, state);
     }
   } else {
-    shelfEdges(surface, state);
+    // The open shelf cover is seen head-on. A card deck shows its plies
+    // on the closed spine, with the selected card's flat face when open.
+    if (cards) surface.querySelector(':scope > .shelf-cuts')?.remove();
+    else shelfEdges(surface, state);
     shelfLeaves(surface, layout, size);
     const spine = surface.querySelector('.shelf-spine');
     paintFace(spine, 'spine', { ...state, bands: null });

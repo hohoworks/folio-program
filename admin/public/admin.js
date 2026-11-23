@@ -12,7 +12,7 @@ import { planPdfPages, remainingPdfPages, sidesByShape, pdfFaceSize } from './pd
 import { createConstructionEditor, cutFaces, materialPayload, resolvedLeafLayout } from './book-construction.js';
 import { createCardEditor, cardsFromPages } from './card-editor.js';
 import { trimSize } from './vendor/mockup/book-material.js';
-import { cardThumbnail } from './vendor/mockup/book-format.js';
+import { cardThumbnail, validCoverStock, validSaddleSections } from './vendor/mockup/book-format.js';
 
 const $ = selector => document.querySelector(selector);
 const form = $('#book-form');
@@ -196,7 +196,7 @@ function bookPreferences(item) {
     'book-form-type': item?.bookForm || 'bound',
     construction: item && {
       edgeTreatments: item.edgeTreatments, edgeBands: item.edgeBands, ringPositions: item.ringPositions,
-      leafLayout: item.leafLayout, cardStock: item.cardStock,
+      leafLayout: item.leafLayout, cardStock: item.cardStock, coverStock: item.coverStock, saddleSections: item.saddleSections,
     } || undefined,
     'mockup-view': item?.mockupView ?? 'spine',
     'case-color': item?.caseColor ?? metadataDefaults['case-color'],
@@ -240,6 +240,8 @@ function updateMockup() {
   const book = {
     title: meta.title || '', coverImages, bindingType: meta['binding-type'], mockupView: meta['mockup-view'],
     bookForm: cards ? 'cards' : 'bound', cardStock: cards ? options.cardStock : undefined,
+    coverStock: !cards && validCoverStock(options.coverStock) ? options.coverStock : undefined,
+    saddleSections: !cards && meta['binding-type'] === 'saddle-stitch' && validSaddleSections(options.saddleSections, pageCount) ? options.saddleSections : undefined,
     ringPositions: typeof positions === 'string' && positions.trim() ? positions.trim().split(/[\s,]+/).map(Number) : Array.isArray(positions) ? positions : undefined,
     edgeBands: options.edgeBands, edgeTreatments, leafLayout: cards ? undefined : options.leafLayout,
     mockupDetails: meta.mockupDetails, pages: pages || [], pageCount,
@@ -250,6 +252,7 @@ function updateMockup() {
     paperColor: meta['auto-paper-color'] ? null : meta['paper-color'],
   };
   book.leafLayout = resolvedLeafLayout(book.leafLayout, trimSize(book));
+  construction.showSectionTotal(pageCount);
   construction.renderLeafPreview(book.leafLayout, Math.ceil(pageCount / 2), trimSize(book), book.pages);
   renderMockup(book);
 }
@@ -442,7 +445,7 @@ for (const key of Object.keys(fileLabels)) {
 form.addEventListener('input', event => {
   if (event.target.type === 'file' || event.target.closest('#project-specific')) return;
   readMetadata();
-  if (event.target.closest('#edge-options, #leaf-options, #card-stock') || mockupPanel.contains(event.target) || ['title', 'trim-width', 'trim-height', 'spine-width', 'case-color', 'paper-color'].includes(event.target.id)) updateMockup();
+  if (event.target.closest('#edge-options, #leaf-options, #card-stock, #cover-stock, #saddle-section-options') || mockupPanel.contains(event.target) || ['title', 'trim-width', 'trim-height', 'spine-width', 'case-color', 'paper-color'].includes(event.target.id)) updateMockup();
   if (event.target.name === 'tagIds') state.tagsTouched = true;
   state.registrationId = crypto.randomUUID();
   clearTimeout(saveTimer);
@@ -1467,7 +1470,11 @@ async function initialize() {
   state.cards ??= state.item?.bookForm === 'cards' ? cardsFromPages(state.item.pages) : [];
   state.galleryImages ||= [];
   state.galleryDirty ||= false;
-  state.metadata = { ...bookPreferences(state.item), ...state.metadata };
+  const storedPreferences = bookPreferences(state.item);
+  state.metadata = { ...storedPreferences, ...state.metadata };
+  if (storedPreferences.construction) {
+    state.metadata.construction = { ...storedPreferences.construction, ...state.metadata.construction };
+  }
   state.metadata['first-page-side'] ??= state.item?.firstPageSide ?? '';
   state.metadata['join-split'] ??= !state.files.interior && state.item?.joinSplitPages === true;
   const english = state.item?.translations?.en || {};

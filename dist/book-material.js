@@ -20,9 +20,14 @@ export function spineRatio(book) {
   let estimate = Math.max(3.5, paperWidth + .5);
   switch (book.bindingType) {
     case 'hardcover': estimate = Math.max(5, paperWidth + 4.5); break;
-    case 'saddle-stitch': estimate = Math.min(4, Math.max(1, paperWidth)); break;
+    case 'saddle-stitch':
+      estimate = book.saddleSections?.length ? book.saddleSections.reduce((total, section) =>
+        total + Math.max(.6, Math.ceil(section.pages / 2) * .1), 0) : Math.min(4, Math.max(1, paperWidth));
+      break;
     case 'exposed-sewn': estimate = Math.max(3, paperWidth); break;
   }
+  const coverDepth = book.coverStock?.layerThicknessMm?.reduce((sum, ply) => sum + ply, 0);
+  if (coverDepth) estimate = Math.max(estimate, paperWidth + 2 * coverDepth);
   return (book.spineWidthMm ?? estimate) / trimSize(book)[0];
 }
 
@@ -108,22 +113,6 @@ function roundedCorners(surface, enabled, hardcover, allCorners) {
   surface.append(wall);
 }
 
-function saddleFasteners(spine, count) {
-  let row = spine.querySelector('.binding-fasteners');
-  if (!count) { row?.remove(); return; }
-  if (row?.childElementCount === count) return;
-  row?.remove();
-  row = document.createElement('i');
-  row.className = 'binding-fasteners';
-  row.setAttribute('aria-hidden', 'true');
-  for (let index = 0; index < count; index++) {
-    const fastener = document.createElement('i');
-    fastener.style.top = ((index + .5) / count) * 100 + '%';
-    row.append(fastener);
-  }
-  spine.append(row);
-}
-
 function setRibbon(surface, material) {
   const existing = surface.querySelector(':scope > .book-ribbon');
   surface.toggleAttribute('data-ribbon', Boolean(material));
@@ -144,13 +133,14 @@ function setPhysicalDetails(surface, book, width) {
   const d = resolveMockupDetails(book.mockupDetails);
   const cards = book.bookForm === 'cards';
   const hardcover = !cards && book.bindingType === 'hardcover';
-  const saddle = !cards && book.bindingType === 'saddle-stitch';
   const model = surface.classList.contains('book-model');
   const height = trimSize(book)[1];
   const radius = Math.max(0, Math.min((cards ? book.cardStock?.cornerRadiusMm : d.cornerRadiusMm) ?? 0, width / 2, height / 2));
   const length = mm => 'calc(var(--material-width) * ' + mm / width + ')';
+  const coverDepth = cards ? null : book.coverStock?.layerThicknessMm?.reduce((sum, ply) => sum + ply, 0);
+  const board = coverDepth ?? d.boardThicknessMm;
   const properties = {
-    '--custom-board': d.boardThicknessMm == null ? null : length(d.boardThicknessMm),
+    '--custom-board': board == null ? null : length(board),
     '--endpaper': d.endpaperColor,
     '--custom-groove': d.grooveWidthMm == null ? null : d.grooveWidthMm / width * 100 + '%',
     '--corner-radius': length(radius),
@@ -174,13 +164,11 @@ function setPhysicalDetails(surface, book, width) {
   surface.toggleAttribute('data-round-spine', hardcover && d.spineShape === 'round');
   surface.toggleAttribute('data-rounded-corners', radius > 0);
   surface.toggleAttribute('data-colored-sewing', book.bindingType === 'exposed-sewn' && Boolean(d.threadColor));
-  surface.toggleAttribute('data-saddle-thread', saddle && d.stitchType === 'thread');
   const spine = surface.querySelector('.spine, .shelf-spine');
   if (model) {
     roundedSpine(spine, hardcover && d.spineShape === 'round');
-    roundedCorners(surface, radius > 0, hardcover, cards);
+    roundedCorners(surface, radius > 0, hardcover || Boolean(coverDepth), cards);
   }
-  saddleFasteners(spine, saddle && d.stitchType === 'wire' ? d.stapleCount : 0);
   setBookSurfaces(surface, book, d, [width, height], spineRatio(book) * width);
 }
 

@@ -1,4 +1,4 @@
-import { leafDimensions, validLeafLayout } from './vendor/mockup/book-format.js';
+import { leafDimensions, validLeafLayout, validCoverStock, validSaddleSections } from './vendor/mockup/book-format.js';
 
 export const cutFaces = { fore: '책배', head: '머리', tail: '꼬리' };
 const $ = id => document.getElementById(id);
@@ -55,12 +55,145 @@ export function createConstructionEditor() {
       numberField('끝 쪽', 'end', value.end ?? value.start ?? 1, { min: 1, max: 1000, step: 1, required: true }),
       colorField('종이 색', 'color', value.color), removeButton(row, notify));
   }
-  function appendLayer(color, thickness = 0.22) {
-    const row = makeRow('card-layers', '합지 층');
+  const spareLayers = { card: [], cover: [] };
+  function appendLayer(kind, color = paper, thickness = .22) {
+    const row = makeRow(kind + '-layers', '합지 층');
     row.append(colorField('층 색', 'color', color),
       numberField('층 두께 (mm)', 'thickness', thickness, { min: 0.01, max: 20, required: true }),
       removeButton(row, notify));
   }
+  function resizeLayers(kind, count) {
+    const list = $(kind + '-layers');
+    while (list.children.length > count) spareLayers[kind].push(list.removeChild(list.lastElementChild));
+    while (list.children.length < count) {
+      const row = spareLayers[kind].pop();
+      if (row) list.append(row);
+      else appendLayer(kind);
+    }
+  }
+  function writeLayers(kind, stock, defaults) {
+    spareLayers[kind] = [];
+    $(kind + '-layers').replaceChildren();
+    (stock?.layers ?? defaults).forEach((color, i) => appendLayer(kind, color, stock?.layerThicknessMm?.[i]));
+  }
+  function readStock(kind, measured) {
+    const rows = readRows(kind + '-layers');
+    return { layers: rows.map(row => row.color),
+      ...(measured && { layerThicknessMm: rows.map(row => row.thickness ?? null) }) };
+  }
+  function drawSection(kind) {
+    const measured = kind === 'cover' || $('card-thickness-mode').value === 'measured';
+    const { layers, layerThicknessMm } = readStock(kind, measured);
+    const weights = layerThicknessMm ?? layers.map(() => 1);
+    const valid = weights.every(mm => Number.isFinite(mm) && mm >= .01 && mm <= 20);
+    const section = $(kind + '-section-preview');
+    section.replaceChildren();
+    section.hidden = !valid;
+    if (valid) layers.forEach((color, i) => {
+      const ply = document.createElement('span');
+      ply.style.backgroundColor = color;
+      ply.style.flexGrow = weights[i];
+      section.append(ply);
+    });
+    const label = kind === 'cover' ? '표지 한 장' : '카드 한 장';
+    const total = weights.reduce((sum, mm) => sum + mm, 0);
+    $(kind + '-thickness-summary').textContent = label + ' 단면 · ' + layers.length + '층' +
+      (measured && valid ? ' · 총 ' + Number(total.toFixed(3)) + ' mm' : '');
+  }
+  function updateLayers(kind, measured) {
+    const list = $(kind + '-layers');
+    const count = list.children.length;
+    $(kind + '-layer-count').value = count;
+    $('add-' + kind + '-layer').disabled = count >= 16;
+    Array.from(list.children).forEach((row, i) => {
+      row.querySelector('legend').textContent = (i + 1) + '층';
+      row.querySelector('button').disabled = count <= 1;
+      const input = row.querySelector('[data-key="thickness"]');
+      input.disabled = !measured;
+      input.parentElement.hidden = !measured;
+    });
+    drawSection(kind);
+  }
+  for (const kind of ['card', 'cover']) {
+    const count = $(kind + '-layer-count');
+    for (let n = 1; n <= 16; n++) count.add(new Option(n + '층', n));
+    count.addEventListener('change', () => resizeLayers(kind, Number(count.value)));
+    $('add-' + kind + '-layer').addEventListener('click', () => {
+      resizeLayers(kind, Math.min(16, $(kind + '-layers').children.length + 1));
+      notify();
+    });
+    $(kind + '-layers').addEventListener('input', () => drawSection(kind));
+  }
+  let bookPages = 0;
+  const sections = $('saddle-section-list');
+  function appendSection(value = {}) {
+    const row = makeRow(sections.id, '소책자');
+    row.append(numberField('쪽수', 'pages', value.pages, { min: 1, max: 1000, step: 1, required: true }),
+      numberField('가로 (mm)', 'width', value.sizeMm?.[0], { min: .01, max: 5000, placeholder: '기본 판형' }),
+      numberField('세로 (mm)', 'height', value.sizeMm?.[1], { min: .01, max: 5000, placeholder: '기본 판형' }));
+    const colorMode = document.createElement('label');
+    colorMode.className = 'check-label';
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = !!value.color;
+    enabled.dataset.sectionColor = '';
+    colorMode.append(enabled, ' 표지·등 색 지정');
+    row.append(colorMode, colorField('표지·등 색', 'color', value.color));
+    const actions = document.createElement('div');
+    actions.className = 'item-actions';
+    for (const [direction, label] of [['up', '위로'], ['down', '아래로']]) {
+      const move = document.createElement('button');
+      move.type = 'button'; move.className = 'text-button'; move.textContent = label; move.dataset.move = direction;
+      move.addEventListener('click', () => {
+        if (direction === 'up' && row.previousElementSibling) sections.insertBefore(row, row.previousElementSibling);
+        if (direction === 'down' && row.nextElementSibling) sections.insertBefore(row.nextElementSibling, row);
+        notify();
+        move.focus();
+      });
+      actions.append(move);
+    }
+    actions.append(removeButton(row, notify));
+    row.append(actions);
+  }
+  function readSections() {
+    if (!$('saddle-sections-enabled').checked) return null;
+    return readRows(sections.id).map(({ pages, width, height, color }, i) => ({
+      pages: pages ?? null,
+      ...(width != null || height != null ? { sizeMm: [width ?? null, height ?? null] } : {}),
+      ...(sections.children[i].querySelector('[data-section-color]').checked && { color }),
+    }));
+  }
+  function updateSections(enabled) {
+    show($('saddle-section-options'), enabled);
+    show($('saddle-section-fields'), enabled && $('saddle-sections-enabled').checked);
+    const rows = [...sections.children];
+    $('add-saddle-section').disabled = rows.length >= 16;
+    rows.forEach((row, i) => {
+      row.querySelector('legend').textContent = (i + 1) + '권';
+      row.querySelector('[data-move="up"]').disabled = i === 0;
+      row.querySelector('[data-move="down"]').disabled = i === rows.length - 1;
+      row.querySelector('.item-actions > :last-child').disabled = rows.length <= 1;
+      const customColor = row.querySelector('[data-section-color]').checked;
+      const ink = row.querySelector('[data-key="color"]');
+      ink.disabled = !customColor; ink.parentElement.hidden = !customColor;
+    });
+  }
+  function showSectionTotal(total) {
+    bookPages = total || 0;
+    const assigned = readRows(sections.id).reduce((sum, row) => sum + (row.pages || 0), 0);
+    $('saddle-section-total').textContent = '배정 ' + assigned + '쪽' + (bookPages ? ' / 전체 ' + bookPages + '쪽' : '');
+  }
+  $('saddle-sections-enabled').addEventListener('change', () => {
+    if (!$('saddle-sections-enabled').checked || sections.children.length) return;
+    if (bookPages < 2) { appendSection({ pages: bookPages || undefined }); return; }
+    const first = bookPages >= 8 ? 4 * Math.floor(bookPages / 8) : Math.floor(bookPages / 2);
+    appendSection({ pages: first }); appendSection({ pages: bookPages - first });
+  });
+  $('add-saddle-section').addEventListener('click', () => {
+    if (sections.children.length >= 16) return;
+    const used = readRows(sections.id).reduce((sum, row) => sum + (row.pages || 0), 0);
+    appendSection({ pages: Math.max(0, bookPages - used) || undefined }); notify();
+  });
   function appendRange(value = {}, single = false) {
     const row = makeRow('leaf-ranges', single ? '개별 장' : '장 구간');
     row.append(numberField(single ? '장 번호' : '시작 장', 'from', value.from ?? 1, { min: 1, max: 1000, step: 1, required: true }));
@@ -101,19 +234,24 @@ export function createConstructionEditor() {
       $('crop-' + face).append(numberField(label, key, initial, { min: key === 'x' || key === 'y' ? 0 : 0.01, max: 100, required: true }));
     }
   }
-  for (const [id, action] of [['add-edge-band', () => appendBand()], ['add-card-layer', () => appendLayer(paper)],
+  for (const [id, action] of [['add-edge-band', () => appendBand()],
     ['add-leaf-range', () => appendRange()], ['add-leaf-override', () => appendRange({}, true)]]) {
     $(id).addEventListener('click', () => { action(); notify(); });
   }
-  function showCardThickness() {
-    const inputs = [...$('card-layers').querySelectorAll('[data-key="thickness"]')];
-    const valid = $('card-thickness-mode').value === 'measured' && inputs.length && inputs.every(input => input.validity.valid);
-    const total = inputs.reduce((sum, input) => sum + input.valueAsNumber, 0);
-    $('card-thickness-summary').textContent = valid ? '카드 한 장 두께 ' + Number(total.toFixed(3)) + ' mm' : '';
+  let originalLeaf, originalLeafControls;
+  function readLeaves() {
+    const source = $('leaf-source').value;
+    const ranges = readRows('leaf-ranges').map(({ step0, step1, from, to, ...rest }) => ({
+      from, to: to ?? from, ...rest, ...(step0 != null || step1 != null ? { stepMm: [step0 ?? null, step1 ?? null] } : {}),
+    }));
+    const first = pair(number($('leaf-width')), number($('leaf-height')));
+    return source === 'uniform' ? null : {
+      source, align: $('leaf-align').value, ranges,
+      ...(source === 'custom' && { ...(first && { firstSizeMm: first }), stepMm: [number($('leaf-step-width')) || 0, number($('leaf-step-height')) || 0] }),
+    };
   }
-  $('card-layers').addEventListener('input', showCardThickness);
   function write(value = {}) {
-    const { edgeTreatments = {}, edgeBands = [], cardStock, leafLayout = {}, ringPositions } = value;
+    const { edgeTreatments = {}, edgeBands = [], cardStock, coverStock, saddleSections, leafLayout = {}, ringPositions } = value;
     $('ring-positions').value = Array.isArray(ringPositions) ? ringPositions.join(', ') : ringPositions || '';
     for (const face of Object.keys(cutFaces)) {
       const edge = edgeTreatments?.[face] || {};
@@ -131,8 +269,12 @@ export function createConstructionEditor() {
     $('card-thickness-mode').value = cardStock?.layerThicknessMm ? 'measured' : 'auto';
     $('card-thumbnail-mode').value = cardStock?.thumbnailMode || '';
     $('card-thumbnail-card').value = cardStock?.thumbnailCard ?? 1;
-    $('card-layers').replaceChildren();
-    (cardStock?.layers || [paper]).forEach((color, i) => appendLayer(color, cardStock?.layerThicknessMm?.[i]));
+    writeLayers('card', cardStock, [paper]);
+    $('saddle-sections-enabled').checked = !!saddleSections;
+    sections.replaceChildren();
+    (saddleSections || []).forEach(appendSection);
+    $('cover-stock-enabled').checked = !!coverStock;
+    writeLayers('cover', coverStock, [paper, '#c9bba9']);
     $('leaf-source').value = leafLayout?.source || 'uniform';
     $('leaf-align').value = leafLayout?.align || 'top';
     for (const [index, axis] of ['width', 'height'].entries()) {
@@ -142,6 +284,8 @@ export function createConstructionEditor() {
     $('leaf-ranges').replaceChildren();
     (leafLayout?.ranges || []).forEach(range => appendRange(range, range.from === range.to && !range.stepMm));
     $('leaf-preview-number').value = 1;
+    originalLeaf = value.leafLayout ?? null;
+    originalLeafControls = JSON.stringify(readLeaves());
   }
   function read() {
     const edgeTreatments = {};
@@ -153,26 +297,20 @@ export function createConstructionEditor() {
         edgeTreatments[face] = { mode, rotation: Number($('rotation-' + face).value), crop };
       }
     }
-    const source = $('leaf-source').value;
-    const ranges = readRows('leaf-ranges').map(({ step0, step1, from, to, ...rest }) => ({
-      from, to: to ?? from, ...rest, ...(step0 != null || step1 != null ? { stepMm: [step0 ?? null, step1 ?? null] } : {}),
-    }));
-    const first = pair(number($('leaf-width')), number($('leaf-height')));
-    const leafLayout = source === 'uniform' ? null : {
-      source, align: $('leaf-align').value, ranges,
-      ...(source === 'custom' && { ...(first && { firstSizeMm: first }), stepMm: [number($('leaf-step-width')) || 0, number($('leaf-step-height')) || 0] }),
-    };
-    const layers = readRows('card-layers');
+    const currentLeaf = readLeaves();
+    const leafLayout = JSON.stringify(currentLeaf) === originalLeafControls ? originalLeaf : currentLeaf;
     const thumbnailMode = $('card-thumbnail-mode').value;
     const cardStock = {
-      cornerRadiusMm: number($('card-corner')) ?? 0, layers: layers.map(layer => layer.color),
-      ...($('card-thickness-mode').value === 'measured' && { layerThicknessMm: layers.map(layer => layer.thickness ?? null) }),
+      cornerRadiusMm: number($('card-corner')) ?? 0,
+      ...readStock('card', $('card-thickness-mode').value === 'measured'),
       ...(thumbnailMode && { thumbnailMode }),
       ...(thumbnailMode === 'single' && { thumbnailCard: number($('card-thumbnail-card')) ?? null }),
     };
-    return { edgeTreatments, edgeBands: readRows('edge-bands'), ringPositions: $('ring-positions').value, cardStock, leafLayout };
+    return { edgeTreatments, edgeBands: readRows('edge-bands'), ringPositions: $('ring-positions').value, cardStock,
+      coverStock: $('cover-stock-enabled').checked ? readStock('cover', true) : null, saddleSections: readSections(), leafLayout };
   }
   function update(cards, cardCount) {
+    updateSections(!cards && $('binding-type').value === 'saddle-stitch');
     document.querySelectorAll('[data-cards]').forEach(group => show(group, cards));
     document.querySelectorAll('[data-bound]').forEach(group => show(group, !cards));
     for (const face of Object.keys(cutFaces)) {
@@ -182,17 +320,9 @@ export function createConstructionEditor() {
     }
     show($('leaf-settings'), $('leaf-source').value !== 'uniform');
     show($('leaf-base-fields'), $('leaf-source').value === 'custom');
-    const layers = $('card-layers');
-    const measured = $('card-thickness-mode').value === 'measured';
-    $('add-card-layer').disabled = layers.children.length >= 16;
-    for (const [i, row] of Array.from(layers.children).entries()) {
-      row.querySelector('legend').textContent = (i + 1) + '층';
-      row.querySelector('button').disabled = layers.children.length <= 1;
-      const input = row.querySelector('[data-key="thickness"]');
-      input.disabled = !measured;
-      input.parentElement.hidden = !measured;
-    }
-    showCardThickness();
+    show($('cover-stock-fields'), !cards && $('cover-stock-enabled').checked);
+    updateLayers('card', $('card-thickness-mode').value === 'measured');
+    updateLayers('cover', true);
     const single = $('card-thumbnail-mode').value === 'single';
     $('card-thumbnail-card-row').hidden = !single;
     $('card-thumbnail-card').disabled = !single;
@@ -207,7 +337,7 @@ export function createConstructionEditor() {
     $('leaf-preview-size').textContent = width > 0 && height > 0
       ? leaf + '장 · ' + Number(width.toFixed(2)) + ' × ' + Number(height.toFixed(2)) + ' mm' : '';
   }
-  return { write, read, update, renderLeafPreview };
+  return { write, read, update, renderLeafPreview, showSectionTotal };
 }
 
 export function resolvedLeafLayout(layout, trim) {
@@ -217,7 +347,9 @@ export function resolvedLeafLayout(layout, trim) {
 
 export function materialPayload(meta, pageCount, trim, pages) {
   const cards = meta['book-form-type'] === 'cards';
-  const { edgeBands, edgeTreatments, cardStock, ringPositions } = meta.construction;
+  const { edgeBands, edgeTreatments, cardStock, coverStock, ringPositions } = meta.construction;
+  const saddleSections = !cards && meta['binding-type'] === 'saddle-stitch' ? meta.construction.saddleSections : null;
+  if (saddleSections && !validSaddleSections(saddleSections, pageCount)) throw new Error('권별 쪽수의 합을 전체 ' + pageCount + '쪽에 맞추고, 판형은 가로·세로를 함께 입력해주세요.');
   const leafLayout = resolvedLeafLayout(meta.construction.leafLayout, trim);
   for (const { start, end } of edgeBands) {
     if (start < 1 || end < start || end > pageCount) throw new Error('색지의 시작·끝 쪽을 내지 쪽수 안에서 지정해주세요.');
@@ -233,11 +365,12 @@ export function materialPayload(meta, pageCount, trim, pages) {
   if (!cards && leafLayout && !validLeafLayout(leafLayout, Math.ceil(pageCount / 2), trim || undefined, pages)) {
     throw new Error('장별 재단 크기를 확인해주세요. 각 장의 가로·세로가 양수이고 구간이 실제 장수 안에 있어야 합니다.');
   }
+  if (!cards && coverStock && !validCoverStock(coverStock)) throw new Error('표지 합지의 층 색상과 두께(0.01~20 mm)를 확인해주세요.');
   if (cards && cardStock.layerThicknessMm?.some(mm => !Number.isFinite(mm) || mm < 0.01 || mm > 20)) {
     throw new Error('각 층의 두께를 0.01~20 mm 사이로 입력해주세요.');
   }
   if (cards && cardStock.thumbnailMode === 'single' && (!Number.isInteger(cardStock.thumbnailCard) || cardStock.thumbnailCard < 1 || cardStock.thumbnailCard > Math.ceil(pageCount / 2))) {
     throw new Error('목록에 있는 카드 번호를 대표 카드로 지정해주세요.');
   }
-  return { bookForm: cards ? 'cards' : 'bound', edgeBands, edgeTreatments, ringPositions: positions, cardStock: cards ? cardStock : null, leafLayout: cards ? null : leafLayout };
+  return { bookForm: cards ? 'cards' : 'bound', edgeBands, edgeTreatments, ringPositions: positions, cardStock: cards ? cardStock : null, coverStock: cards ? null : coverStock, saddleSections, leafLayout: cards ? null : leafLayout };
 }

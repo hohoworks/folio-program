@@ -21,7 +21,7 @@ export function createMockupControls(panel) {
     for (const group of groups) {
       const { bindings, stitch: material, enabledBy } = group.dataset;
       const show = (!bindings || bindings.split(' ').includes(binding))
-        && (!material || binding !== 'saddle-stitch' || stitch.value === material)
+        && (!material || binding !== 'saddle-stitch' || material.split(' ').includes(stitch.value))
         && (!enabledBy || panel.querySelector('#' + enabledBy).checked)
         && !group.parentElement.closest('fieldset[hidden]');
       group.hidden = !show;
