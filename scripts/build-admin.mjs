@@ -12,7 +12,7 @@ await mkdir(output, { recursive: true });
 const mockup = new URL('../admin/public/vendor/mockup/', import.meta.url);
 await mkdir(new URL('assets/', mockup), { recursive: true });
 await Promise.all([
-  ...['style.css', 'book-material.js', 'mockup-options.js', 'book-surfaces.css', 'book-surfaces.js', 'book-format.js', 'assets/sewn-signatures.webp'].map(file =>
+  ...['style.css', 'book-material.js', 'mockup-options.js', 'book-surfaces.css', 'book-surfaces.js', 'saddle-material.js', 'book-format.js', 'assets/sewn-signatures.webp'].map(file =>
     copyFile(new URL('../dist/' + file, import.meta.url), new URL(file, mockup))),
   ...['project-tags.js', 'project-media.js'].map(file =>
     copyFile(new URL('../dist/' + file, import.meta.url), new URL('../admin/public/' + file, import.meta.url))),

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addReaderWire, bandStops, scanWindow, wireGeometry } from '../dist/book-surfaces.js';
+import { addReaderWire, bandStops, modelWireCurves, scanWindow, wireGeometry } from '../dist/book-surfaces.js';
 import { physicalSpreads } from '../dist/book-format.js';
 import { resolveMockupDetails } from '../dist/mockup-options.js';
 import { spineRatio } from '../dist/book-material.js';
@@ -39,6 +39,21 @@ test('independent rings close at their supplied positions and use the specified 
     assert.ok(Math.hypot(...loop[0].xyz.map((n,a) => n - loop.at(-1).xyz[a])) < 1e-9);
     const ys = loop.map(point => point.xyz[1]);
     assert.equal(Math.max(...ys) - Math.min(...ys), 30);
+  }
+});
+
+test('the spiral tips terminate at the binding surface, clear of the visible head and tail cuts', () => {
+  for (const side of ['left', 'right', 'top', 'bottom']) {
+    for (const depth of [.5, 22, 65]) {
+      const g = wireGeometry('spiral', {ringPlacement:side, ringCount:19, ringDiameterMm:30}, null, [210,148], depth, 48);
+      const [coil] = modelWireCurves(g, 'spiral');
+      for (const [x, y, z] of [coil[0], coil.at(-1)]) {
+        const along = side === 'left' || side === 'right' ? y : x;
+        const inset = {left:x, right:210-x, top:y, bottom:148-y}[side];
+        assert.ok(along > 0 && along < g.length);
+        assert.ok(Math.abs(inset) < 1e-7 || Math.abs(Math.abs(z) - depth / 2) < 1e-7);
+      }
+    }
   }
 });
 

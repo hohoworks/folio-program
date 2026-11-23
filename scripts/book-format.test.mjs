@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  cardFaces, cardThumbnail, leafCountForBook, leafDimensions, leafGeometry, normalizeBookFormat,
-  physicalSpreads, validCardStock, validLeafLayout,
+  bookLeafGeometry, cardFaces, cardThumbnail, leafCountForBook, leafDimensions, leafGeometry, normalizeBookFormat,
+  physicalSpreads, validCardStock, validCoverStock, validLeafLayout, validSaddleSections,
 } from '../dist/book-format.js';
 
 test('one leaf owns its front and back even at the first and last spread', () => {
@@ -80,6 +80,66 @@ test('layer measurements match the color sequence; the chosen card must exist', 
     { thumbnailCard: 1.5 }, { thumbnailSrc: 'assets/books/other/card.png' },
   ]) assert.equal(validCardStock({ ...stock, ...invalid }, 2), false);
   assert.equal(validCardStock({ layerThicknessMm: [.1] }), false);
+});
+
+test('bound covers preserve the exact ply sequence and measurements without changing legacy card stock', () => {
+  const stock = { layers: ['#dd4433', '#ffeedc', '#224466'], layerThicknessMm: [.25, .73, .32] };
+  assert.equal(validCoverStock(stock), true);
+  assert.deepEqual(normalizeBookFormat({ coverStock: stock }), { bookForm: 'bound', coverStock: stock });
+  for (const invalid of [
+    null, {}, { layers: stock.layers }, { ...stock, layers: [] }, { ...stock, layers: ['#fee'] },
+    { ...stock, layerThicknessMm: [.25, .73] }, { ...stock, layerThicknessMm: [0, 1, 2] },
+    { ...stock, layerThicknessMm: [.25, .73, 20.01] }, { ...stock, thumbnailMode: 'deck' },
+    { layers: Array(17).fill('#ffeecc'), layerThicknessMm: Array(17).fill(.1) },
+  ]) {
+    assert.equal(validCoverStock(invalid), false);
+    assert.deepEqual(normalizeBookFormat({ coverStock: invalid }), { bookForm: 'bound' });
+  }
+  const legacy = { layers: ['#331122', '#eeeeee'] };
+  assert.deepEqual(normalizeBookFormat({ bookForm: 'cards', cardStock: legacy, coverStock: stock }),
+    { bookForm: 'cards', cardStock: legacy });
+});
+
+test('ordered saddle booklets account for every printed face, including odd sections and repaired split pages', () => {
+  const sections = [{ pages: 1, sizeMm: [100, 164], color: '#117766' }, { pages: 3 }];
+  const book = { bindingType: 'saddle-stitch', pages: Array(8).fill({}), joinSplitPages: true, saddleSections: sections };
+  assert.ok(validSaddleSections(sections, 4));
+  assert.ok(validSaddleSections([{ pages: 4 }], 4));
+  assert.deepEqual(normalizeBookFormat(book).saddleSections, sections);
+  for (const invalid of [[], [{ pages: 0 }, { pages: 4 }], [{ pages: 1.5 }, { pages: 2.5 }],
+    [{ pages: 3 }], [{ pages: 5 }], [{ pages: 4, color: '#ccc' }], [{ pages: 4, sizeMm: [10, 0] }],
+    [{ pages: 4, src: 'image' }], Array(17).fill({ pages: 1 })]) {
+    assert.equal(validSaddleSections(invalid, 4), false);
+  }
+  assert.equal(normalizeBookFormat({ ...book, joinSplitPages: false }).saddleSections, undefined);
+  assert.equal(normalizeBookFormat({ ...book, bindingType: 'paperback' }).saddleSections, undefined);
+  assert.equal(normalizeBookFormat({ ...book, bookForm: 'cards' }).saddleSections, undefined);
+});
+
+test('odd booklet boundaries keep each face, centre each cut and enclose both faces on the physical leaf', () => {
+  const book = { bindingType: 'saddle-stitch', trimSizeMm: [100, 160], pageCount: 4,
+    saddleSections: [{ pages: 1, sizeMm: [80, 80], color: '#aa1133' }, { pages: 3, sizeMm: [120, 200] }] };
+  const g = bookLeafGeometry(book);
+  assert.deepEqual([g.width, g.height, g.coverTop], [120, 200, 20]);
+  assert.deepEqual(g.sections.map(s => [s.startPage, s.endPage, s.top]), [[1, 1, 60], [2, 4, 0]]);
+  assert.deepEqual(g.faces[0], { width: 80, height: 80, top: 60, sectionIndex: 0, color: '#aa1133' });
+  assert.deepEqual(g.faces[1], { width: 120, height: 200, top: 0, sectionIndex: 1 });
+  assert.deepEqual(g.leaves[0], { ...g.faces[0], width: 120, height: 200, top: 0 });
+  const stepped = bookLeafGeometry({ ...book, leafLayout: { stepMm: [-1, -2], ranges: [
+    { from: 2, to: 2, widthMm: 70, align: 'bottom', offsetMm: 2 },
+  ] } });
+  assert.deepEqual(stepped.faces[3], { width: 70, height: 198, top: 4, sectionIndex: 1 });
+  assert.equal(stepped.height, 202);
+  const pdf = bookLeafGeometry({ ...book, leafLayout: { source: 'pdf' } },
+    [{ sizeMm: [70, 75] }, { sizeMm: [110, 194] }, { sizeMm: [72, 80] }, {}]);
+  assert.deepEqual(pdf.faces.map(face => face.width), [70, 110, 72, 72]);
+  assert.equal(bookLeafGeometry({ ...book, saddleSections: undefined }), undefined);
+  const legacy = bookLeafGeometry({ ...book, saddleSections: undefined, leafLayout: { stepMm: [3, 2] } });
+  assert.deepEqual(legacy.leaves, leafGeometry({ stepMm: [3, 2] }, 2, [100, 160]).leaves);
+  assert.deepEqual(legacy.faces.map(face => face.width), [100, 100, 103, 103]);
+  assert.equal(bookLeafGeometry({ ...book, bookForm: 'cards' }), undefined);
+  assert.equal(bookLeafGeometry({ ...book, saddleSections: [{ pages: 4, sizeMm: [10, 80] }],
+    leafLayout: { stepMm: [-15, 0] } }), undefined);
 });
 
 test('a deck uses its cover, a chosen card uses its front, a legacy thumbnail is preserved', () => {
