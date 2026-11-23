@@ -52,6 +52,20 @@ function stripBetween(className, x0, x1, z0, z1, unit) {
   return panel;
 }
 
+function spineProfile(shape, depthMm) {
+  // A square spine is flat across the middle; only the shoulders turn over.
+  const rounded = shape === 'round';
+  const amplitude = rounded ? .21 : Math.min(.11, (shape === 'square' ? 1.5 : .40) / depthMm);
+  const stations = rounded ? Array.from({ length: 15 }, (_, i) => i / 14) :
+    [0, .025, .055, .10, .17, .50, .83, .90, .945, .975, 1];
+  const rise = t => {
+    if (rounded) return amplitude * Math.sin(Math.PI * t);
+    const shoulder = Math.sin(Math.PI * Math.min(.5, t / .34, (1 - t) / .34));
+    return amplitude * (.86 * shoulder + .14 * Math.sin(Math.PI * t));
+  };
+  return { rounded, amplitude, stations, rise };
+}
+
 function shapedSpine(spine, shape, depthMm) {
   const previous = spine.querySelector('.round-spine');
   const print = spine.querySelector(':scope > :is(img, span)');
@@ -66,16 +80,7 @@ function shapedSpine(spine, shape, depthMm) {
   curve.className = 'round-spine';
   curve.setAttribute('aria-hidden', 'true');
   curve.dataset.source = key;
-  // A square spine is flat across the middle; only the shoulders turn over.
-  const rounded = shape === 'round';
-  const amplitude = rounded ? .21 : Math.min(.11, (shape === 'square' ? 1.5 : .40) / depthMm);
-  const stations = rounded ? Array.from({ length: 15 }, (_, i) => i / 14) :
-    [0, .025, .055, .10, .17, .50, .83, .90, .945, .975, 1];
-  const rise = t => {
-    if (rounded) return amplitude * Math.sin(Math.PI * t);
-    const shoulder = Math.sin(Math.PI * Math.min(.5, t / .34, (1 - t) / .34));
-    return amplitude * (.86 * shoulder + .14 * Math.sin(Math.PI * t));
-  };
+  const { rounded, amplitude, stations, rise } = spineProfile(shape, depthMm);
   const tones = t => {
     const lo = Math.max(0, t - .007), hi = Math.min(1, t + .007);
     const normal = Math.atan2(rise(hi) - rise(lo), hi - lo);
@@ -109,6 +114,8 @@ function shapedSpine(spine, shape, depthMm) {
   spine.append(curve);
 }
 
+const jointProfile = [[0, 0], [.18, -.02], [.34, -.25], [.48, -.79], [.58, -1], [.72, -.48], [.88, -.09], [1, 0]];
+
 function coverJoint(surface, faceName, width, jointMm, depressionMm) {
   const face = surface.querySelector(':scope > .' + faceName);
   const previous = surface.querySelector(':scope > .joint-' + faceName);
@@ -134,8 +141,7 @@ function coverJoint(surface, faceName, width, jointMm, depressionMm) {
   backing.className = 'joint-backing';
   backing.style.transform = 'translateZ(calc(var(--material-width) * ' + -depressionMm / width + ' - .25px))';
   joint.append(backing);
-  const profile = [[0, 0], [.18, -.02], [.34, -.25], [.48, -.79], [.58, -1], [.72, -.48], [.88, -.09], [1, 0]];
-  if (back) profile.reverse();
+  const profile = back ? [...jointProfile].reverse() : jointProfile;
   const position = t => back ? 1 - jointMm / width * t : jointMm / width * t;
   for (let i = 1; i < profile.length; i++) {
     const [u, h] = profile[i - 1], [v, k] = profile[i];
@@ -193,6 +199,111 @@ function roundedFore(surface, active) {
   contour.push('0 100%');
   surface.style.setProperty('--fore-contour', 'polygon(' + contour.join(',') + ')');
   fore.append(arc);
+}
+
+// At a case-bound head the turn-in sits level with the boards, while the
+// text block sits lower. The colored endband is sewn around a separate core.
+const svgNamespace = 'http://www.w3.org/2000/svg';
+const precision = value => +value.toFixed(5);
+
+function cutPath(host, path, attributes) {
+  const part = document.createElementNS(svgNamespace, 'path');
+  part.setAttribute('d', path);
+  for (const [key, value] of Object.entries(attributes)) part.setAttribute(key, value);
+  host.append(part);
+}
+
+function cutLayer(host, end, name, unit, span, start) {
+  const layer = document.createElementNS(svgNamespace, 'svg');
+  layer.setAttribute('class', 'case-cut-insert case-' + name + ' case-at-' + end);
+  layer.setAttribute('viewBox', [start, 0, span, 1].join(' '));
+  layer.setAttribute('preserveAspectRatio', 'none');
+  layer.setAttribute('aria-hidden', 'true');
+  layer.style.setProperty('--cut-unit', 'var(' + unit + ')');
+  layer.style.setProperty('--cut-span', span);
+  layer.style.setProperty('--cut-start', start);
+  host.append(layer);
+  return layer;
+}
+
+function caseEnds(surface, shape, depth, boardMm, depression) {
+  const active = Boolean(shape && !surface.hasAttribute('data-variable-block'));
+  surface.toggleAttribute('data-case-cut', active);
+  const headband = surface.hasAttribute('data-headband');
+  const headPaint = surface.querySelector(':scope > .head')?.dataset.cut;
+  const tailPaint = surface.querySelector(':scope > .tail')?.dataset.cut;
+  const key = [shape, depth, boardMm, depression, headband, headPaint, tailPaint,
+    surface.hasAttribute('data-hollow-cut')].join('/');
+  const previous = surface.querySelector(':scope > .case-cut-insert');
+  if (active && previous?.dataset.profile === key) return;
+  for (const old of surface.querySelectorAll(':scope > .case-cut-insert')) old.remove();
+  if (!active) return;
+
+  const { stations, rise } = spineProfile(shape, depth);
+  const round = shape === 'round';
+  const block = Math.max(depth * .04, depth - 2 * Math.min(boardMm, depth * .48));
+  const thickness = Math.min(.045, .79 / depth);
+  const bead = Math.min(.13, 1.65 / block);
+  const paper = t => .025 - (round ? .155 * Math.sin(Math.PI * t) : 0);
+  const xyz = (x, y) => precision(x) + ' ' + precision(y);
+  const trace = (points, x) => points.map(t => xyz(x(t), t)).join(' L');
+  const outline = (points, left, right) => 'M' + trace(points, left) + ' L' + trace([...points].reverse(), right) + 'Z';
+  const negative = t => -rise(t);
+  const lining = t => negative(t) + thickness;
+  const steps = Array.from({ length: 19 }, (_, i) => i / 18);
+  const percent = t => precision(100 * t) + '%';
+  const hollow = surface.hasAttribute('data-hollow-cut');
+  const right = steps.map(t => (hollow ? 'calc(100% - var(--block) * ' + precision(.14 * Math.sin(Math.PI * t)) + ')' : '100%') + ' ' + percent(t));
+  const left = [...steps].reverse().map(t => 'calc(var(--case-cut-extension) + var(--block) * ' + precision(paper(t)) + ') ' + percent(t));
+  surface.style.setProperty('--case-paper-outline', 'polygon(' + [...right, ...left].join(',') + ')');
+
+  const depressionRatio = Math.min(.28, depression / boardMm);
+  for (const edge of ['top', 'bottom']) {
+    const near = edge === 'top';
+    const edgePoint = (u, h) => 'calc(var(--case-joint-width) * ' + u + ') ' + percent(near ? -h * depressionRatio : 1 + h * depressionRatio);
+    const fold = jointProfile.map(([u, h]) => edgePoint(u, h));
+    const rest = near ? ['100% 0', '100% 100%', '0 100%'] : ['100% 100%', '100% 0', '0 0'];
+    surface.style.setProperty('--board-notch-' + edge, 'polygon(' + [...fold, ...rest].join(',') + ')');
+  }
+  for (const [end, treatment] of [['head', headPaint], ['tail', tailPaint]]) {
+    const recess = cutLayer(surface, end, 'lining', '--depth', .75, -.25);
+    recess.dataset.profile = key;
+    const blockFraction = block / depth;
+    const blockSide = t => Math.min(1, Math.max(0, (t - .5) / blockFraction + .5));
+    const paperAtDepth = t => paper(blockSide(t)) * blockFraction + .009;
+    cutPath(recess, outline(steps, negative, paperAtDepth), { fill: 'var(--lining-shadow)' });
+    const rim = cutLayer(surface, end, 'turn-in', '--depth', .75, -.25);
+    cutPath(rim, outline(stations, negative, lining), { fill: 'var(--turn-in-color)' });
+
+    if (!treatment) {
+      const folds = cutLayer(surface, end, 'gatherings', '--block', .85, -.25);
+      const gatherings = Math.min(30, Math.max(4, Math.round(block / 1.5)));
+      for (let i = 1; i < gatherings; i++) {
+        const t = i / gatherings;
+        // Rounding and backing angle the outer signatures into the shoulders.
+        const shoulder = round ? Math.sin(2 * Math.PI * t) * .031 : 0;
+        const x = paper(t) + .007;
+        cutPath(folds, 'M' + xyz(x,t) + ' C' + xyz(x + .12, t + shoulder) + ' ' +
+          xyz(.29,t) + ' ' + xyz(.58,t), { fill: 'none', stroke: '#534735', 'stroke-opacity': '.21', 'stroke-width': '.006' });
+      }
+    }
+    if (!headband) continue;
+    const band = cutLayer(surface, end, 'endband', '--block', .85, -.25);
+    // The core follows the shape of the folded spine, leaving the upper board
+    // turn-in visible behind it. Each diagonal stitch wraps that same core.
+    const axis = t => paper(t) - .01;
+    const points = steps.map(t => .018 + .964 * t);
+    cutPath(band, 'M' + trace(points, axis), { fill: 'none', stroke: 'var(--headband-shadow)', 'stroke-width': bead, 'stroke-linecap': 'round' });
+    const count = Math.min(56, Math.max(5, Math.round(block / 1.1)));
+    for (let i = 0; i < count; i++) {
+      const t = .023 + .95 * (i + .5) / count;
+      const x = axis(t), z = .34 / count, r = bead * .39;
+      cutPath(band, 'M' + xyz(x-r, t+z) + ' Q' + xyz(x-.003,t-z) + ' ' + xyz(x+r,t-z), {
+        fill: 'none', stroke: i % 2 ? 'var(--headband-a)' : 'var(--headband-b)',
+        'stroke-width': .90 / count, 'stroke-linecap': 'round',
+      });
+    }
+  }
 }
 
 // A curved fore-edge needs to meet both the top and side of the page block.
@@ -299,6 +410,8 @@ function setPhysicalDetails(surface, book, width) {
     const depression = hardcover ? Math.min((board ?? 2.2) * .62, 1.6, depthMm * .13) : .14;
     for (const face of ['front', 'back']) coverJoint(surface, face, width, jointMm, depression);
     roundedFore(surface, hardcover && d.spineShape === 'round' && !radius);
+    caseEnds(surface, hardcover ? d.spineShape : null, depthMm,
+      board ?? Math.min(depthMm * .16, width * .0095), depression);
   }
 }
 
