@@ -1186,7 +1186,7 @@ function createProjectCard(entry, index) {
   }
   sizePreview(ratio || 1);
   if (isCardBook) {
-    addCardThumbnail(picture, entry, { lazy: index > 2 });
+    addCardThumbnail(picture, entry, { lazy: index > 2, flat: true });
   } else if (entry.type === 'book' && !entry.coverImages) {
     const cover = appendText(picture, 'span', 'cover-art', '');
     cover.dataset.book = entry.id;
