@@ -1,0 +1,137 @@
+/* Cut paper is painted in the coordinate system of each physical face. */
+.book-model [data-cut], .shelf-cut[data-cut], .shelf-spine[data-cut] {
+  background: linear-gradient(128deg, #ffffff12, transparent 46%, #251d1916),
+    repeating-linear-gradient(var(--paper-angle, 90deg), transparent 0 2px, #211a0e10 2.2px 2.8px),
+    var(--cut-paint, var(--paper-color, #efede4));
+}
+.edge-scan {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  pointer-events: none;
+}
+.shelf-cuts, .shelf-hardware, .shelf-wire-spine {
+  position: absolute;
+  pointer-events: none;
+}
+.shelf-cuts {
+  --cut-width: clamp(1.4px, calc(var(--visible-spine, 8px) * .38), 9px);
+  inset: 0 auto 0 0;
+  width: var(--face-width);
+  opacity: 0;
+  transition: opacity .48s;
+}
+.shelf-cut { position: absolute; overflow: hidden; background: var(--paper-color, #efede4); }
+.shelf-cut.shelf-fore { top: 0; right: calc(0px - var(--cut-width)); width: var(--cut-width); height: 100%; }
+.shelf-cut:is(.shelf-head, .shelf-tail) { --paper-angle: 0deg; left: 0; width: 100%; height: calc(var(--cut-width) * .45); }
+.shelf-cut.shelf-head { bottom: 100%; }
+.shelf-cut.shelf-tail { top: 100%; }
+.shelf-book.is-preview .shelf-cuts { opacity: 1; }
+.shelf-book[data-card-stock] .shelf-cover { overflow: hidden; }
+.book-model[data-card-stock] :is(.front, .back), .shelf-book[data-card-stock] .shelf-cover {
+  border-radius: var(--corner-radius, 0px);
+}
+.book-model[data-card-stock][data-rounded-corners] :is(.head, .tail) { left: calc(var(--corner-radius) - var(--seam-lap)); }
+.book-model[data-card-stock][data-rounded-corners] .spine { inset-block: calc(var(--corner-radius) - var(--seam-lap)); }
+.corner-strip.left-corner { left: calc(var(--corner-radius) * var(--x-inset) + var(--strip-inset)); right: auto; }
+.corner-strip.left-corner.upper { transform: translate(-50%, -50%) translateZ(var(--strip-z)) rotateZ(var(--edge-angle)) rotateX(90deg); }
+.corner-strip.left-corner.lower { transform: translate(-50%, 50%) translateZ(var(--strip-z)) rotateZ(var(--edge-angle)) rotateX(-90deg); }
+[data-card-stock] :is(.spine, .shelf-spine), [data-wire-bound] :is(.spine, .shelf-spine) { color: transparent; }
+.book-model:is([data-card-stock], [data-wire-bound]) .spine, .shelf-book:is([data-card-stock], [data-wire-bound]) .shelf-spine {
+  background: var(--cut-paint, repeating-linear-gradient(to right, var(--paper-color, #efede4) 0 1.25px, #c6c3b8 1.3px 1.7px));
+}
+:is([data-card-stock], [data-wire-bound]) :is(.spine, .shelf-spine) > :is(span,img),
+:is([data-card-stock], [data-wire-bound]) :is(.spine, .shelf-spine)::after { visibility: hidden; }
+.shelf-book[data-card-stock][data-rounded-corners] .shelf-cuts {
+  clip-path: inset(calc(-1 * var(--cut-width)) calc(-1 * var(--cut-width)) calc(-1 * var(--cut-width)) 0 round var(--corner-radius));
+}
+.stage .model-frame { scale: var(--physical-fit, 1); }
+.model-hardware, .variable-block, .leaf-slice {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+[data-wire-bound] {
+  --wire-shadow: color-mix(in srgb, var(--wire-color) 63%, #171717);
+  --wire-light: color-mix(in srgb, var(--wire-color) 63%, white);
+}
+.wire-segment {
+  position: absolute;
+  height: var(--wire-gauge);
+  transform-origin: 0 0;
+  transform-style: preserve-3d;
+}
+.wire-segment::before, .wire-segment::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 35%;
+  background: linear-gradient(to bottom, var(--wire-shadow), var(--wire-light) 30%, var(--wire-color) 64%, var(--wire-shadow));
+}
+.wire-segment::after { transform: rotateX(90deg); }
+.shelf-hardware { opacity: 0; transition: opacity .48s; }
+.shelf-wire-spine {
+  left: 50%;
+  height: 100%;
+  top: 0;
+  transform: translateX(-50%);
+  transition: opacity .48s;
+}
+.shelf-book.is-preview .shelf-hardware { opacity: 1; }
+.shelf-book.is-preview .shelf-wire-spine { opacity: 0; }
+.book-model[data-variable-block] { --sheet-depth: calc(var(--depth) - min(1.2px, var(--depth) * .13)); }
+.stage[data-binding="hardcover"] .book-model[data-variable-block] { --sheet-depth: var(--block); }
+.book-model[data-variable-block] > :is(.fore, .head, .tail),
+.book-model[data-variable-block] .corner-strip.edge-paper { display: none; }
+.leaf-slice { inset: auto; left: 0; }
+.leaf-slice::before, .leaf-slice::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--paper-color, #efede4);
+  backface-visibility: hidden;
+}
+.leaf-slice::before { transform: translateZ(calc(var(--slab-depth) / 2)); }
+.leaf-slice::after { transform: rotateY(180deg) translateZ(calc(var(--slab-depth) / 2)); }
+.slice-edge { position: absolute; overflow: hidden; backface-visibility: hidden; background: var(--paper-color, #efede4); }
+.slice-fore {
+  width: calc(var(--slab-depth) + .08px);
+  inset-block: 0; right: calc(var(--slab-depth) / -2);
+  transform: rotateY(90deg);
+}
+.slice-head, .slice-tail { --paper-angle: 0deg; height: calc(var(--slab-depth) + .08px); inset-inline: 0; }
+.slice-head { top: calc(var(--slab-depth) / -2); transform: rotateX(90deg); }
+.slice-tail { bottom: calc(var(--slab-depth) / -2); transform: rotateX(-90deg); }
+.wire-hole {
+  position: absolute;
+  width: calc(var(--wire-gauge) * 2.4);
+  height: calc(var(--wire-gauge) * 2);
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 48% 40%, #2a2724 30%, #514b42 65%, #bfb7a6 80%, transparent);
+  backface-visibility: hidden;
+}
+.book-model:is([data-variable-block], [data-wire-bound]) {
+  transform: rotateX(var(--rx)) rotateY(var(--ry)) rotateZ(-5deg) translate(var(--center-cut-x), var(--center-cut-y));
+}
+.shelf-leaves {
+  position: absolute;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .48s;
+}
+.shelf-book.is-preview .shelf-leaves { opacity: 1; }
+.shelf-book.is-preview:has(.shelf-leaves) { width: var(--shelf-leaf-width); }
+.stage[data-uploaded] .book-model[data-card-stock] .back:not(.artwork) { background: var(--paper-color, #fff); }
+.book-model[data-card-stock] .back:not(.artwork) > span { display: none; }
+.shelf-book[data-proportional]:is([data-wire-bound], :has(.shelf-leaves)) {
+  --book-height: calc(min(var(--shelf-height) * .74, 66cqw / var(--shelf-book-ratio)) * var(--physical-fit, 1));
+}
+.shelf-book.is-preview:is([data-wire-bound], :has(.shelf-leaves)) {
+  margin-top: var(--shelf-over-top, 0px);
+  margin-bottom: max(var(--shelf-over-bottom, 0px), var(--shelf-ribbon-drop, 0px));
+}
+.shelf-book[data-ribbon] { --shelf-ribbon-drop: var(--ribbon-length); }

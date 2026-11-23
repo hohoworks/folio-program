@@ -21,6 +21,10 @@ export const mockupDetailFields = Object.freeze({
   stapleColor: color('철심색', '#9a9a9a'),
   sewingStationCount: { ...number('노출사철 실 개수', 5, 1, 12), integer: true },
   threadColor: color('제본 실색', null),
+  ringCount: { ...number('링 개수', 12, 1, 60), integer: true },
+  ringDiameterMm: number('링 지름', 14, 4, 65, 0.1),
+  ringColor: color('링 색', '#686b70'),
+  ringPlacement: { type: 'enum', label: '링 위치', default: 'left', choices: ['left', 'top', 'right', 'bottom'] },
 });
 
 export function validMockupDetail(field, value) {

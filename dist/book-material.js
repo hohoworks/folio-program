@@ -1,19 +1,20 @@
 import { resolveMockupDetails } from './mockup-options.js';
+import { setBookSurfaces } from './book-surfaces.js';
+import { trimSize } from './book-format.js';
+export { trimSize };
 
 export const mockupViews = Object.freeze({
   spine: { x: -12, y: 32 }, edge: { x: -12, y: -32 }, back: { x: -12, y: 148 }, front: { x: 0, y: 0 },
 });
 export const validBookColor = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
-export function trimSize(book) {
-  if (book.trimSizeMm) return book.trimSizeMm;
-  const ratio = book.coverRatio;
-  if (!ratio) return [148, 210];
-  return ratio >= 1 ? [210, 210 / ratio] : [210 * ratio, 210];
-}
-
 export function spineRatio(book) {
   // One sheet of book paper contributes a front and a back to the page count.
-  const paperWidth = Math.ceil((book.pageCount ?? book.pages.length) / 2) * .1;
+  const sheets = Math.max(1, Math.ceil((book.pageCount ?? book.pages?.length ?? 0) / 2));
+  if (book.bookForm === 'cards') {
+    const plies = Math.max(1, book.cardStock?.layers?.length || 1);
+    return (book.spineWidthMm ?? Math.max(.5, sheets * .22 * plies)) / trimSize(book)[0];
+  }
+  const paperWidth = sheets * .1;
   let estimate = Math.max(3.5, paperWidth + .5);
   switch (book.bindingType) {
     case 'hardcover': estimate = Math.max(5, paperWidth + 4.5); break;
@@ -70,16 +71,16 @@ function roundedSpine(spine, enabled) {
 }
 
 // A curved fore-edge needs to meet both the top and side of the page block.
-function roundedCorners(surface, enabled, hardcover) {
+function roundedCorners(surface, enabled, hardcover, allCorners) {
   let wall = surface.querySelector('.corner-walls');
   if (!enabled) { wall?.remove(); return; }
   const layers = hardcover ? ['edge-paper', 'front-rim', 'back-rim'] : ['edge-paper'];
-  if (wall?.dataset.layers === String(layers.length)) return;
+  if (wall?.dataset.layers === layers.length + '/' + allCorners) return;
   wall?.remove();
   wall = document.createElement('i');
   wall.className = 'corner-walls';
   wall.setAttribute('aria-hidden', 'true');
-  wall.dataset.layers = layers.length;
+  wall.dataset.layers = layers.length + '/' + allCorners;
   const segments = 5;
   for (let i = 0; i < segments; i++) {
     const angle = (i + .5) * Math.PI / (2 * segments);
@@ -93,6 +94,12 @@ function roundedCorners(surface, enabled, hardcover) {
         strip.style.setProperty('--edge-shade', .05 + .14 * Math.sin(angle));
         strip.style.width = 'calc(var(--corner-radius) * ' + 2 * Math.sin(Math.PI / (4 * segments)) + ' + .7px)';
         wall.append(strip);
+        if (allCorners) {
+          const left = strip.cloneNode();
+          left.classList.add('left-corner');
+          left.style.setProperty('--edge-angle', (side === 'upper' ? -angle : angle) + 'rad');
+          wall.append(left);
+        }
       }
     }
   }
@@ -117,11 +124,12 @@ function saddleFasteners(spine, count) {
 
 function setPhysicalDetails(surface, book, width) {
   const d = resolveMockupDetails(book.mockupDetails);
-  const hardcover = book.bindingType === 'hardcover';
-  const saddle = book.bindingType === 'saddle-stitch';
+  const cards = book.bookForm === 'cards';
+  const hardcover = !cards && book.bindingType === 'hardcover';
+  const saddle = !cards && book.bindingType === 'saddle-stitch';
   const model = surface.classList.contains('book-model');
   const height = trimSize(book)[1];
-  const radius = Math.min(d.cornerRadiusMm, width * .45, height * .45);
+  const radius = Math.max(0, Math.min((cards ? book.cardStock?.cornerRadiusMm : d.cornerRadiusMm) ?? 0, width / 2, height / 2));
   const length = mm => 'calc(var(--material-width) * ' + mm / width + ')';
   const properties = {
     '--custom-board': d.boardThicknessMm == null ? null : length(d.boardThicknessMm),
@@ -146,7 +154,7 @@ function setPhysicalDetails(surface, book, width) {
   surface.toggleAttribute('data-headband', hardcover && d.headbandEnabled);
   surface.toggleAttribute('data-ribbon', hardcover && d.ribbonEnabled);
   surface.toggleAttribute('data-round-spine', hardcover && d.spineShape === 'round');
-  surface.toggleAttribute('data-rounded-corners', d.cornerRadiusMm > 0);
+  surface.toggleAttribute('data-rounded-corners', radius > 0);
   surface.toggleAttribute('data-colored-sewing', book.bindingType === 'exposed-sewn' && Boolean(d.threadColor));
   surface.toggleAttribute('data-saddle-thread', saddle && d.stitchType === 'thread');
   const spine = surface.querySelector('.spine, .shelf-spine');
@@ -158,9 +166,10 @@ function setPhysicalDetails(surface, book, width) {
     stage.style.setProperty('--extra-ribbon-height', extra);
     stage.style.setProperty('--ribbon-lift', extra ? 'calc(var(--model-width) * ' + (-extra * height / width / 2) + ')' : '0px');
     roundedSpine(spine, hardcover && d.spineShape === 'round');
-    roundedCorners(surface, d.cornerRadiusMm > 0, hardcover);
+    roundedCorners(surface, radius > 0, hardcover, cards);
   }
   saddleFasteners(spine, saddle && d.stitchType === 'wire' ? d.stapleCount : 0);
+  setBookSurfaces(surface, book, d, [width, height], spineRatio(book) * width);
 }
 
 export function setBookMaterial(surface, book, artwork) {
