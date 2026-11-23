@@ -3,6 +3,7 @@ import { copyFile, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, writeF
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { catalogAssets, checkSite } from './check-site.mjs';
+import { projectFrame, projectMedia } from '../dist/project-media.js';
 import { titleLanguage } from '../dist/title-language.js';
 import { localizedSiteTitles, migrateStarterSite } from '../dist/site-title.js';
 
@@ -54,6 +55,30 @@ function renderSiteTitle(html, site) {
   const wordmark = `<a href="#project" class="wordmark" lang="${titleLanguage(ko)}" data-en-lang="${titleLanguage(en)}">${koText}</a>`;
   return html.replace('<title>포트폴리오</title>', () => `<title data-en="${enText}">${koText}</title>`)
     .replace('<a href="#project" class="wordmark" aria-label="홈"></a>', () => wordmark);
+}
+
+function publicFramePolicy(projects) {
+  const origins = new Set();
+  for (const project of projects) {
+    for (const entry of projectMedia(project)) {
+      if (entry.type !== 'embed') continue;
+      const frame = projectFrame(entry.url);
+      if (frame) origins.add(new URL(frame.src).origin);
+    }
+  }
+  return 'frame-src ' + (origins.size ? [...origins].sort().join(' ') : "'none'");
+}
+
+const defaultFramePolicy = "frame-src 'none'";
+
+function renderPublicHeaders(template, policy) {
+  const marker = defaultFramePolicy + ';';
+  if (!template.includes(marker)) throw new Error('공개 사이트의 프레임 정책을 확인해주세요.');
+  const headers = template.replace(marker, policy + ';');
+  // Pages limits each line to 2,000 characters. The document's early meta policy
+  // still enforces the full exact list when it is too long for the HTTP header.
+  return headers.split('\n').some(line => line.length > 2000)
+    ? template.replace(marker, 'frame-src https:;') : headers;
 }
 
 function contains(parent, path) {
@@ -127,6 +152,7 @@ export async function buildPublic(projectRoot, { contentDir, outputDir } = {}) {
   }
   const catalog = publicCatalog(JSON.parse(await readFile(catalogPath, 'utf8')));
   const paths = [...program, ...(catalog.demo ? demoProgram : []), ...catalogAssets(catalog)];
+  const framePolicy = publicFramePolicy(catalog.projects);
   await mkdir(parent, { recursive: true });
   const work = await mkdtemp(join(parent, '.folio-build-'));
   const staging = join(work, 'new');
@@ -145,7 +171,15 @@ export async function buildPublic(projectRoot, { contentDir, outputDir } = {}) {
         await mkdir(dirname(target), { recursive: true });
         if (path === 'index.html') {
           const html = await readFile(input, 'utf8');
-          await writeFile(target, renderSiteTitle(html, catalog.site));
+          const marker = `<meta http-equiv="Content-Security-Policy" content="${defaultFramePolicy}">`;
+          if (framePolicy !== defaultFramePolicy && !html.includes(marker)) {
+            throw new Error('공개 문서의 프레임 정책을 확인해주세요.');
+          }
+          const documentPolicy = `<meta http-equiv="Content-Security-Policy" content="${framePolicy}">`;
+          await writeFile(target, renderSiteTitle(html.replace(marker, documentPolicy), catalog.site));
+        } else if (path === '_headers') {
+          const template = await readFile(input, 'utf8');
+          await writeFile(target, renderPublicHeaders(template, framePolicy));
         } else {
           await copyFile(input, target);
         }

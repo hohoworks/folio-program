@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { buildPublic } from './build-public.mjs';
 import { loadCatalog, readerSpreads } from '../dist/catalog.js';
-import { projectVideoPlayer } from '../dist/project-media.js';
+import { projectFrame, projectVideoPlayer } from '../dist/project-media.js';
 
 test('video share links resolve to official inline players and preserve share start times and unlisted Vimeo hashes', () => {
   const id = 'M7lc1UVf-VE';
@@ -363,4 +363,59 @@ test('public build retains ordered mixed media, skips private uploads and suppor
     await assert.rejects(buildPublic(f.root), /미디어 형식/);
     assert.deepEqual((await f.read()).projects[0].media, media);
   }
+});
+
+test('public frame policy follows published player origins and shrinks on the next publication', async t => {
+  const f = await fixture(t);
+  const embed = url => ({ type: 'embed', url });
+  const media = [
+    embed('https://youtu.be/M7lc1UVf-VE?t=90'),
+    embed('https://www.youtube.com/embed/M7lc1UVf-VE'),
+    embed('https://vimeo.com/76979871/abc'),
+    embed('https://player.vimeo.com/video/76979871?h=abc'),
+    embed('https://EXAMPLE.ORG:8443/work?version=3#view'),
+    embed('https://example.org:8443/another'),
+    embed('https://예시.kr/작품'),
+  ];
+  const projects = [
+    { id: 'live', title: 'Live', media },
+    { id: 'draft', title: 'Draft', published: false, media: [embed('https://draft.example.org/')] },
+  ];
+  const headers = () => readFile(join(f.output, '_headers'), 'utf8');
+  const frameSources = text => text.match(/; frame-src ([^;]+);/)[1].split(' ');
+  await f.save({ books: [], projects });
+  await buildPublic(f.root);
+  const output = await headers();
+  assert.deepEqual(frameSources(output), [
+    'https://example.org:8443', 'https://player.vimeo.com', 'https://www.youtube-nocookie.com',
+    'https://www.youtube.com', new URL('https://예시.kr').origin,
+  ].sort());
+  assert.match(output, /^  ! Access-Control-Allow-Origin$/m);
+  assert.match(output, /^  Content-Security-Policy-Report-Only: style-src-attr 'none'$/m);
+  assert.match(output, /; media-src 'self';/);
+  assert.doesNotMatch(await readFile(join(f.output, '404.html'), 'utf8'), /<style[\s>]/i);
+
+  await f.save({ books: [], projects: projects.map(item => ({ ...item, published: false })) });
+  await buildPublic(f.root);
+  assert.deepEqual(frameSources(await headers()), ["'none'"]);
+});
+
+test('large embedding collections keep their full document policy and unsupported hosts remain clickable', async t => {
+  const f = await fixture(t);
+  const siteUrls = Array.from({ length: 100 }, (_, i) => 'https://host-' + i + '.example.org');
+  const linkOnly = 'https://[::1]:8443/work';
+  const urls = [...siteUrls, linkOnly];
+  await f.save({ books: [], projects: [{ id: 'work', title: 'Work', media: urls.map(url => ({ type: 'embed', url })) }] });
+  await buildPublic(f.root);
+  const headers = await readFile(join(f.output, '_headers'), 'utf8');
+  assert.ok(headers.split('\n').every(line => line.length <= 2000));
+  assert.match(headers, /; frame-src https:;/);
+  const html = await readFile(join(f.output, 'index.html'), 'utf8');
+  const policy = html.match(/<meta http-equiv="Content-Security-Policy" content="frame-src ([^"]+)">/);
+  assert.deepEqual(policy[1].split(' '), siteUrls.sort());
+  assert.ok(policy.index < html.indexOf('<script'));
+  assert.match(await readFile(join(f.output, '404.html'), 'utf8'), /content="frame-src 'none'"/);
+  assert.equal((await f.read()).projects[0].media.at(-1).url, linkOnly);
+  assert.equal(projectFrame(linkOnly), null);
+  assert.equal(projectFrame('https://*.example.org/work'), null);
 });
