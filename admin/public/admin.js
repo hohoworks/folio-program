@@ -16,6 +16,7 @@ import { trimSize } from './vendor/mockup/book-material.js';
 const $ = selector => document.querySelector(selector);
 const form = $('#book-form');
 const fields = $('#book-fields');
+const editorTabs = [...$('#editor-tabs').querySelectorAll('[role="tab"]')];
 const publish = $('#publish');
 const progress = $('#upload-progress');
 const status = $('#form-status');
@@ -251,9 +252,48 @@ function updateMockup() {
   renderMockup(book);
 }
 
+function selectEditorTab(tab) {
+  const book = state.kind === 'book';
+  const mockup = book && tab === 'mockup';
+  state.editorTab = mockup ? 'mockup' : 'info';
+  $('#editor-tabs').hidden = !book;
+  $('#editor-info').hidden = mockup;
+  $('#editor-info').setAttribute('role', book ? 'tabpanel' : 'group');
+  $('#editor-info').setAttribute('aria-labelledby', book ? 'editor-tab-info' : 'editor-heading');
+  $('#editor-mockup').hidden = !mockup;
+  $('#mockup-fields').disabled = !book;
+  for (const button of editorTabs) {
+    const selected = button.id === 'editor-tab-' + state.editorTab;
+    button.setAttribute('aria-selected', String(selected));
+    button.tabIndex = selected ? 0 : -1;
+  }
+}
+
+for (const [index, button] of editorTabs.entries()) {
+  button.addEventListener('click', () => {
+    selectEditorTab(button === editorTabs[0] ? 'info' : 'mockup');
+    persist();
+  });
+  button.addEventListener('keydown', event => {
+    const next = { ArrowLeft: 1 - index, ArrowRight: 1 - index, Home: 0, End: 1 }[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    editorTabs[next].click();
+    editorTabs[next].focus();
+  });
+}
+
+// Reveal the first invalid input before the browser focuses it, including collapsed options.
+form.addEventListener('invalid', event => {
+  if (form.querySelector('input:invalid, select:invalid, textarea:invalid') !== event.target) return;
+  selectEditorTab(event.target.closest('#editor-mockup') ? 'mockup' : 'info');
+  for (let details = event.target.closest('details'); details; details = details.parentElement.closest('details')) details.open = true;
+}, true);
+
 function updateView() {
   if (!state) return;
   const isBook = state.kind === 'book';
+  selectEditorTab(state.editorTab);
   $('#book-specific').hidden = !isBook;
   $('#book-specific').disabled = !isBook;
   $('#project-specific').hidden = false;
@@ -1167,12 +1207,19 @@ function hasWorkDraft() {
 }
 
 function focusEditor() {
-  $('#title').focus({ preventScroll: true });
+  const target = state.editorTab === 'mockup' ? $('#editor-tab-mockup') : $('#title');
+  target.focus({ preventScroll: true });
   $('#editor-heading').scrollIntoView({ block: 'start' });
 }
 
-async function editItem(item) {
+async function editItem(item, tab = 'info') {
   if (busy || siteBusy || editorBusy || catalogBusy || pendingFiles.size) return;
+  if (tab === 'mockup' && state.item?.id === item.id) {
+    selectEditorTab(tab);
+    focusEditor();
+    await persist();
+    return;
+  }
   if (hasWorkDraft() && !window.confirm('현재 임시 작업을 비우고 “' + item.title + '”을 수정할까요?')) return;
   editorBusy = true;
   updateView();
@@ -1181,6 +1228,7 @@ async function editItem(item) {
     await clearEditor();
     state.kind = item.kind;
     state.item = structuredClone(item);
+    state.editorTab = tab;
     state.tagIds = idsFor(item, item.kind, projectTags);
     state.metadata = {
       ...bookPreferences(item),
@@ -1336,8 +1384,9 @@ function renderCatalogue() {
       createButton('↑', item.title + ' 위로', () => moveItem(index, -1), busy || siteBusy || editorBusy || catalogBusy || index === 0),
       createButton('↓', item.title + ' 아래로', () => moveItem(index, 1), busy || siteBusy || editorBusy || catalogBusy || index === catalog.length - 1),
       createButton('수정', item.title + ' 수정', () => editItem(item), busy || siteBusy || editorBusy || catalogBusy),
-      createButton('삭제', item.title + ' 삭제', () => deleteItem(item), busy || siteBusy || editorBusy || catalogBusy),
     );
+    if (item.kind === 'book') actions.append(createButton('목업 조정', item.title + ' 목업 조정', () => editItem(item, 'mockup'), title.disabled));
+    actions.append(createButton('삭제', item.title + ' 삭제', () => deleteItem(item), title.disabled));
     row.append(content, actions);
     return row;
   }));
