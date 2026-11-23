@@ -172,7 +172,7 @@ function updateWorkSlug(keepEmpty = false) {
   const others = catalog.filter(item => item.id !== current?.id);
   const suggested = current?.slug || catalog.find(item => item.id === current?.id)?.slug ||
     (state.metadata.title?.trim() || state.metadata['title-en']?.trim()
-      ? availableWorkSlug({ id: state.registrationId, title: state.metadata.title, translations: { en: { title: state.metadata['title-en'] } } }, others)
+      ? availableWorkSlug({ id: state.draftId, title: state.metadata.title, translations: { en: { title: state.metadata['title-en'] } } }, others)
       : '');
   const raw = state.metadata.slugInput;
   const slug = raw ? normalizeWorkSlug(raw) : suggested;
@@ -988,7 +988,7 @@ function commonPayload() {
   return {
     registrationId: state.registrationId,
     ...(meta.slugInput ? { slug: normalizeWorkSlug(meta.slugInput) } : {}),
-    ...(state.item ? { id: state.item.id, baseRevision: state.item.revision ?? null } : {}),
+    ...(state.item ? { id: state.item.id, baseRevision: state.item.revision ?? null } : { draftId: state.draftId }),
     title: meta.title.trim(),
     category: meta.category?.trim() || '',
     description: meta.description?.trim() || '',
