@@ -6,6 +6,7 @@ import { isProjectVideoPath, projectEmbedURL, projectMedia } from './project-med
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { localizedSiteTitles } from './site-title.js';
 import { displayText } from './punctuation.js';
+import { assignWorkSlugs } from './work-url.js';
 
 const positive = value => Number.isFinite(value) && value > 0;
 const assetPath = /^(?:\.\/)?assets\/(books|projects|site)\/(?:[\w-]+\/)+[\w.-]+\.(?:png|jpe?g|webp)$/i;
@@ -55,6 +56,7 @@ function publishedBook(book) {
     ringPositions: Array.isArray(book.ringPositions) && book.ringPositions.every(n => Number.isFinite(n) && n >= 0 && n <= 100) ? book.ringPositions : undefined,
     translations: englishFields(book),
     id: book.id,
+    slug: book.slug, slugAliases: book.slugAliases,
     title: book.title,
     category: typeof book.category === 'string' ? book.category : '',
     tagIds: Array.isArray(book.tagIds) ? book.tagIds.filter(id => typeof id === 'string') : undefined,
@@ -136,6 +138,7 @@ function publishedProject(project) {
     type: 'project',
     translations: englishFields(project),
     id: project.id,
+    slug: project.slug, slugAliases: project.slugAliases,
     thumbnailSrc: asset(project.thumbnailSrc, 'projects') ? project.thumbnailSrc : undefined,
     title: project.title,
     category: typeof project.category === 'string' ? project.category : '',
@@ -222,7 +225,7 @@ function displayFields(entry) {
 
 function orderedCatalog(bookEntries, projects = [], order = [], site) {
   const settings = siteSettings(site);
-  const entries = [...bookEntries, ...projects].map(entry => ({
+  const entries = assignWorkSlugs([...bookEntries, ...projects]).map(entry => ({
     ...displayFields(entry),
     ...(entry.translations?.en && { translations: { ...entry.translations, en: displayFields(entry.translations.en) } }),
     tagIds: idsFor(entry, entry.type, settings.projectTags),

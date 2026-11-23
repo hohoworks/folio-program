@@ -8,6 +8,7 @@ import { encodeWebImage, encodeThumbnail, imageTargetBytes } from './image-encod
 import { bindMediaOrder } from './media-order.js';
 import { MAX_PROJECT_VIDEO_BYTES, projectEmbedURL, projectVideoPlayer } from './project-media.js';
 import { planPdfPages, remainingPdfPages, sidesByShape, pdfFaceSize } from './pdf-layout.js';
+import { availableWorkSlug, normalizeWorkSlug, workPath } from './work-url.js';
 
 import { createConstructionEditor, cutFaces, materialPayload, resolvedLeafLayout } from './book-construction.js';
 import { createCardEditor, cardsFromPages } from './card-editor.js';
@@ -23,6 +24,8 @@ const progress = $('#upload-progress');
 const status = $('#form-status');
 const error = $('#form-error');
 const notice = $('#draft-notice');
+const slugField = $('#work-slug');
+const slugPreview = $('#work-slug-preview');
 const metadataFields = ['book-form-type', 'title', 'description', 'category', 'title-en', 'description-en', 'category-en', 'year', 'language', 'language-en', 'trim-width', 'trim-height', 'spine-width', 'binding-type', 'page-layout', 'first-page-side', 'mockup-view', 'case-color', 'paper-color'];
 const checkboxFields = ['published', 'back-remove', 'spine-remove', 'join-split', 'auto-case-color', 'auto-paper-color', 'page-jump', 'resume-reading'];
 const metadataDefaults = {
@@ -164,6 +167,26 @@ function readMetadata() {
   if (tagsLoaded) state.tagIds = [...$('#work-tags').querySelectorAll('input:checked')].map(input => input.value);
 }
 
+function updateWorkSlug(keepEmpty = false) {
+  const current = state.item;
+  const others = catalog.filter(item => item.id !== current?.id);
+  const suggested = current?.slug || catalog.find(item => item.id === current?.id)?.slug ||
+    (state.metadata.title?.trim() || state.metadata['title-en']?.trim()
+      ? availableWorkSlug({ id: state.registrationId, title: state.metadata.title, translations: { en: { title: state.metadata['title-en'] } } }, others)
+      : '');
+  const raw = state.metadata.slugInput;
+  const slug = raw ? normalizeWorkSlug(raw) : suggested;
+  const taken = slug && others.some(item => item.slug === slug || item.slugAliases?.includes(slug));
+  const problem = raw && !slug ? '영문 소문자, 숫자, 하이픈으로 주소를 입력해주세요.' :
+    taken ? '다른 작업에서 사용 중인 주소입니다. 다른 이름을 입력해주세요.' : '';
+  const display = raw || (keepEmpty ? '' : suggested) || '';
+  if (slugField.value !== display) slugField.value = display;
+  slugField.setCustomValidity(problem);
+  slugField.setAttribute('aria-invalid', String(Boolean(problem)));
+  slugPreview.toggleAttribute('data-invalid', Boolean(problem));
+  slugPreview.textContent = problem || (slug ? 'hoho-works.com' + workPath(slug) : '');
+}
+
 function writeMetadata() {
   for (const id of metadataFields) $('#' + id).value = state.metadata[id] ?? '';
   for (const id of checkboxFields) $('#' + id).checked = Boolean(state.metadata[id]);
@@ -171,6 +194,7 @@ function writeMetadata() {
   construction.write(state.metadata.construction);
   cardEditor.render();
   $('#kind').value = state.kind;
+  updateWorkSlug();
   renderWorkTags();
 }
 
@@ -297,6 +321,7 @@ form.addEventListener('invalid', event => {
 
 function updateView() {
   if (!state) return;
+  updateWorkSlug();
   const isBook = state.kind === 'book';
   selectEditorTab(state.editorTab);
   $('#book-specific').hidden = !isBook;
@@ -444,12 +469,22 @@ for (const key of Object.keys(fileLabels)) {
 
 form.addEventListener('input', event => {
   if (event.target.type === 'file' || event.target.closest('#project-specific')) return;
+  if (event.target === slugField) state.metadata.slugInput = slugField.value;
   readMetadata();
   if (event.target.closest('#edge-options, #leaf-options, #card-stock, #cover-stock, #saddle-section-options') || mockupPanel.contains(event.target) || ['title', 'trim-width', 'trim-height', 'spine-width', 'case-color', 'paper-color'].includes(event.target.id)) updateMockup();
   if (event.target.name === 'tagIds') state.tagsTouched = true;
   state.registrationId = crypto.randomUUID();
+  if (['title', 'title-en', 'work-slug'].includes(event.target.id)) updateWorkSlug(event.target === slugField);
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persist, 250);
+});
+
+slugField.addEventListener('blur', () => {
+  if (!state) return;
+  const raw = state.metadata.slugInput;
+  if (raw) state.metadata.slugInput = normalizeWorkSlug(raw) || raw;
+  // A cleared field returns to its automatic or previously saved address.
+  updateWorkSlug();
 });
 
 form.addEventListener('change', event => {
@@ -952,6 +987,7 @@ function commonPayload() {
   const meta = state.metadata;
   return {
     registrationId: state.registrationId,
+    ...(meta.slugInput ? { slug: normalizeWorkSlug(meta.slugInput) } : {}),
     ...(state.item ? { id: state.item.id, baseRevision: state.item.revision ?? null } : {}),
     title: meta.title.trim(),
     category: meta.category?.trim() || '',
@@ -1158,7 +1194,10 @@ async function saveItem() {
     } else {
       error.textContent = errorMessage(cause);
       status.textContent = state.commitPayload ? '저장 확인을 누르면 같은 요청을 다시 확인합니다.' : '';
-      if (cause.status === 409) {
+      if (cause.code === 'WORK_SLUG_CONFLICT') {
+        status.textContent = '공유 주소를 바꾼 뒤 다시 저장해주세요.';
+        await refreshCatalogue();
+      } else if (cause.status === 409) {
         status.textContent = '목록에서 최신 작업을 다시 열어 수정해주세요. 현재 입력은 임시 저장했습니다.';
         await refreshCatalogue();
       }
@@ -1203,7 +1242,7 @@ async function clearEditor() {
 
 function hasWorkDraft() {
   const options = state.metadata.construction;
-  return state.item || state.kind !== 'book' || state.tagsTouched || state.cards.length ||
+  return state.item || state.kind !== 'book' || state.tagsTouched || state.metadata.slugInput || state.cards.length ||
     options && (Object.keys(options.edgeTreatments || {}).length || options.edgeBands?.length || options.leafLayout || options.ringPositions) ||
     mockupControls.hasChanges(state.metadata.mockupDetails) ||
     checkboxFields.some(id => Boolean(state.metadata[id]) !== Boolean(metadataDefaults[id])) ||

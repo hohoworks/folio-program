@@ -6,10 +6,11 @@ import { catalogAssets, checkSite } from './check-site.mjs';
 import { projectFrame, projectMedia } from '../dist/project-media.js';
 import { titleLanguage } from '../dist/title-language.js';
 import { localizedSiteTitles, migrateStarterSite } from '../dist/site-title.js';
+import { assignWorkSlugs, workPath } from '../dist/work-url.js';
 
 const program = [
   'index.html', '404.html', '_headers', 'assets/folio.svg', 'assets/sewn-signatures.webp', 'style.css', 'mobile-reader.css', 'web-fonts.js',
-  'viewer.js', 'catalog.js', 'shelf.js', 'book-material.js', 'book-photo.js', 'mockup-options.js', 'project-tags.js', 'project-media.js', 'title-language.js', 'site-language.js', 'site-title.js', 'curl.js', 'mobile-reader.js',
+  'viewer.js', 'catalog.js', 'shelf.js', 'book-material.js', 'book-photo.js', 'mockup-options.js', 'project-tags.js', 'project-media.js', 'work-url.js', 'title-language.js', 'site-language.js', 'site-title.js', 'curl.js', 'mobile-reader.js',
   'punctuation.js', 'book-format.js', 'book-surfaces.js', 'saddle-material.js', 'book-surfaces.css', 'assets/fonts/hoho-punctuation.woff2', 'assets/fonts/OFL.txt',
 ];
 const demoProgram = ['library.js', 'book.js', 'demo-projects.js'];
@@ -32,8 +33,11 @@ function publishedItems(items) {
 }
 
 function publicCatalog(source) {
-  const books = publishedItems(source.books);
-  const projects = publishedItems(source.projects ?? []);
+  const rawProjects = source.projects ?? [];
+  if (!Array.isArray(source.books) || !Array.isArray(rawProjects)) throw new Error('작업 목록 형식을 확인해주세요.');
+  const resolved = assignWorkSlugs([...source.books, ...rawProjects]);
+  const books = publishedItems(resolved.slice(0, source.books.length));
+  const projects = publishedItems(resolved.slice(source.books.length));
   const ids = new Set([...books, ...projects].map(item => item.id));
   return {
     demo: source.demo === true && !source.books.length && !source.projects?.length,
@@ -52,9 +56,39 @@ function renderSiteTitle(html, site) {
   const { ko, en } = localizedSiteTitles(site);
   const koText = escapeHtml(ko);
   const enText = escapeHtml(en);
-  const wordmark = `<a href="#project" class="wordmark" lang="${titleLanguage(ko)}" data-en-lang="${titleLanguage(en)}">${koText}</a>`;
+  const wordmark = `<a href="/#project" class="wordmark" lang="${titleLanguage(ko)}" data-en-lang="${titleLanguage(en)}">${koText}</a>`;
   return html.replace('<title>포트폴리오</title>', () => `<title data-en="${enText}">${koText}</title>`)
-    .replace('<a href="#project" class="wordmark" aria-label="홈"></a>', () => wordmark);
+    .replace('<a href="/#project" class="wordmark" aria-label="홈"></a>', () => wordmark);
+}
+
+async function writeWorkPages(directory, catalog) {
+  let entries = [...catalog.books, ...catalog.projects];
+  if (catalog.demo && !entries.length) {
+    const [{ books }, { demoProjects }] = await Promise.all([import('../dist/library.js'), import('../dist/demo-projects.js')]);
+    entries = assignWorkSlugs([...books, ...demoProjects]);
+  }
+  if (!entries.length) return;
+  const template = await readFile(join(directory, 'index.html'), 'utf8');
+  const site = localizedSiteTitles(catalog.site);
+  const dest = join(directory, 'work');
+  const redirects = [];
+  await mkdir(dest);
+  for (const item of entries) {
+    const canonical = workPath(item.slug);
+    const ko = escapeHtml(item.title + ' · ' + site.ko);
+    const en = escapeHtml((item.translations?.en?.title || item.title) + ' · ' + site.en);
+    const detail = template.replace(/<title\b[^>]*>[^<]*<\/title>/, () =>
+      `<link rel="canonical" href="${canonical}">\n  <title data-en="${en}" data-site-ko="${escapeHtml(site.ko)}" data-site-en="${escapeHtml(site.en)}">${ko}</title>`);
+    // Pages serves work/name.html at /work/name. Other paths still receive the real 404.
+    await writeFile(join(dest, item.slug + '.html'), detail);
+    for (const alias of item.slugAliases ?? []) {
+      await writeFile(join(dest, alias + '.html'), detail);
+      // Keep previously shared links functional on portable static hosts and past
+      // Pages' 2,000-rule limit through the alias HTML and the viewer's route resolver.
+      if (redirects.length < 2000) redirects.push(workPath(alias) + ' ' + canonical + ' 302');
+    }
+  }
+  if (redirects.length) await writeFile(join(directory, '_redirects'), redirects.join('\n') + '\n');
 }
 
 function publicFramePolicy(projects) {
@@ -187,6 +221,7 @@ export async function buildPublic(projectRoot, { contentDir, outputDir } = {}) {
       for (const copy of copies) if (copy.status === 'rejected') throw copy.reason;
     }
     await versionClientAssets(staging, paths);
+    await writeWorkPages(staging, catalog);
     await writeFile(join(staging, 'catalog.json'), JSON.stringify(catalog));
     const result = await checkSite(pathToFileURL(staging + sep));
     const old = await statIfPresent(output);

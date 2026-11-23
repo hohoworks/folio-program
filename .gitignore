@@ -11,6 +11,7 @@ public-site/
 admin/public/vendor/
 admin/public/project-tags.js
 admin/public/project-media.js
+admin/public/work-url.js
 
 /dist/assets/books/
 /dist/assets/projects/

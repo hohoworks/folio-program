@@ -368,7 +368,7 @@ test('registration keeps the GitHub catalog and image references in one commit a
     ...book.pages.map(page => 'dist/' + page.imageSrc),
   ]);
   assert.deepEqual(trees[1].slice(0, -1).map(entry => entry.sha), ['1', '2', '3', '4', '5'].map(x => x.repeat(40)));
-  assert.deepEqual(lastCatalog.books, [oldBook, newParallelBook, book]);
+  assert.deepEqual(lastCatalog.books, [{ ...oldBook, slug: 'work-old-book' }, { ...newParallelBook, slug: 'work-parallel-book' }, book]);
   assert.ok(calls.filter(call => call.path === '/contents/dist/catalog.json').every(call => call.ref !== 'main'));
   const catalog = await request('/api/books', { cookie });
   assert.deepEqual(await catalog.json(), { books: lastCatalog.books });
@@ -460,6 +460,69 @@ function assetPaths(item) {
   return [item.thumbnailSrc, ...Object.values(item.coverImages || {}), ...(item.pages || []).map(page => page.imageSrc),
     ...(item.images || []).map(image => image.imageSrc)].filter(Boolean).map(path => 'dist/' + path);
 }
+
+test('work addresses survive old clients and title edits; current and historical names are unique across kinds', async t => {
+  const initial = { ...legacyBook, translations: { en: { title: 'Bap' } } };
+  const hidden = { id: 'hidden', title: 'Draft', slug: 'taken', slugAliases: ['former'], published: false };
+  const state = repository(t, { books: [initial], projects: [hidden] });
+  const cookie = await session();
+  const save = (path, fields) => request('/api/' + path, { method: 'POST', cookie, body: { registrationId: crypto.randomUUID(), ...fields } });
+  const edit = (revision, fields) => save('books', { id: initial.id, baseRevision: revision, ...fields });
+  const item = async response => {
+    assert.equal(response.status, 200);
+    return (await response.json()).book;
+  };
+  const seeded = (await (await request('/api/catalog', { cookie })).json()).books[0];
+  assert.equal(seeded.slug, 'bap');
+  const retitled = await item(await edit(null, { title: 'New name', translations: { en: { title: 'New English title' } } }));
+  assert.equal(retitled.slug, 'bap');
+  const renamed = await item(await edit(retitled.revision, { slug: '  New_ Book  ' }));
+  assert.equal(renamed.slug, 'new-book');
+  assert.deepEqual(renamed.slugAliases, ['bap']);
+  assert.equal(renamed.id, initial.id);
+  assert.deepEqual(renamed.coverImages, retitled.coverImages);
+  for (const slug of ['taken', 'former']) {
+    const response = await edit(renamed.revision, { slug });
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).code, 'WORK_SLUG_CONFLICT');
+  }
+  for (const slug of ['../invalid', '404', 'index', 'a'.repeat(65), '']) {
+    const response = await edit(renamed.revision, { slug });
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).code, 'INVALID_WORK_SLUG');
+  }
+  const project = { title: 'Bap', assets: { images: [imageFile] } };
+  const collision = await save('projects', { ...project, slug: 'bap' });
+  assert.equal(collision.status, 409);
+  const created = await save('projects', project);
+  assert.equal(created.status, 201);
+  assert.equal((await created.json()).project.slug, 'bap-2');
+  const restored = await item(await edit(renamed.revision, { slug: 'bap' }));
+  assert.deepEqual(restored.slugAliases, ['new-book']);
+  assert.equal(state.catalog.books[0].slug, 'bap');
+});
+
+test('concurrent registrations recheck manually claimed addresses and retry automatic suffixes', async t => {
+  const state = repository(t, { books: [], projects: [] });
+  const cookie = await session();
+  const publish = fields => request('/api/projects', { cookie, method: 'POST', body: {
+    registrationId: crypto.randomUUID(), title: 'Print', assets: { images: [imageFile] }, ...fields,
+  } });
+  function concurrent(id, slug) {
+    state.beforeUpdate = () => {
+      state.head = id;
+      state.catalog.books.push({ id, title: id, slug });
+    };
+  }
+  concurrent('first', 'print');
+  const taken = await publish({ slug: 'Print' });
+  assert.equal(taken.status, 409);
+  assert.equal((await taken.json()).code, 'WORK_SLUG_CONFLICT');
+  concurrent('second', 'print-2');
+  const accepted = await publish({});
+  assert.equal(accepted.status, 201);
+  assert.equal((await accepted.json()).project.slug, 'print-3');
+});
 
 test('PDF auto layout uses the trim aspect for each rotated viewport and only resumes missing sides', async () => {
   const file = widths => ({

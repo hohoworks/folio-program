@@ -3,7 +3,7 @@ import { setBookMaterial, trimSize } from './book-material.js';
 
 const hoverDelay = 135;
 const turnDuration = 460;
-export function createShelf(element, books, { addAssetImage, addCoverArt, select, onPreview, reducedMotion }) {
+export function createShelf(element, books, { addAssetImage, addCoverArt, entryURL, select, onPreview, reducedMotion }) {
   const links = new Map();
   let tallestCover = 1;
   let widestPaint = 1;
@@ -135,7 +135,7 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     link.dataset.book = book.id;
     link.dataset.shelfIndex = index;
     link.dataset.binding = book.bindingType ?? 'paperback';
-    link.href = '#book/' + book.id;
+    link.href = entryURL(book);
     link.setAttribute('aria-label', book.title);
     link.lang = titleLanguage(book.title);
     const [width, height] = trimSize(book);

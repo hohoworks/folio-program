@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addReaderWire, bandStops, coverPunchLayout, modelWireCurves, scanWindow, wireGeometry } from '../dist/book-surfaces.js';
+import { addReaderWire, bandStops, coverPunchLayout, modelWireCurves, scanWindow, wireGeometry, workWireProjection } from '../dist/book-surfaces.js';
 import { bookLeafGeometry, physicalSpreads } from '../dist/book-format.js';
 import { addReaderSaddle } from '../dist/saddle-material.js';
 import { resolveMockupDetails } from '../dist/mockup-options.js';
@@ -157,6 +157,40 @@ test('both covers, the wire through the stack, and each open page share the same
   }
   assert.equal(coverPunchLayout({ bindingType: 'ring', bookForm: 'cards' }), null);
   assert.equal(coverPunchLayout({ bindingType: 'hardcover' }), null);
+});
+
+test('the flat Works spiral shortens only the two folded ends and frames its complete windings', () => {
+  const book = { bindingType:'spiral', trimSizeMm:[210,148], mockupDetails:{ringCount:19,ringDiameterMm:30} };
+  const p = workWireProjection(book, 22);
+  assert.equal(p.centers.length, 19);
+  assert.equal(p.runs.length, 18);
+  p.runs.forEach((turn, i) => {
+    assert.ok(Math.abs(turn[0][0] - 6.3) < 1e-8 && Math.abs(turn[0][1] - p.centers[i][1]) < 1e-8);
+    assert.ok(Math.abs(Math.min(...turn.map(([x]) => x)) + 23.7) < 1e-8);
+    assert.ok(Math.abs(turn.at(-1)[0]) < 1e-8, 'return disappears at the cover edge');
+  });
+  const xControls = (p.ends.rear + p.ends.front).match(/-?[\d.]+/g).map(Number).filter((_,i)=>i%2===0);
+  assert.ok(Math.min(...xControls) < -8 && Math.min(...xControls) > -9, 'only the little folded returns project about 8mm');
+  assert.deepEqual(p.bounds, [-31.4,-6,247.4,160]);
+});
+
+test('independent flat Works rings keep their full diameter and each custom station on all four edges', () => {
+  for (const side of ['left','right','top','bottom']) {
+    const b = { bindingType:'ring', trimSizeMm:[120,175], ringPositions:[7,45,90],
+      mockupDetails:{ringPlacement:side,ringCount:3,ringDiameterMm:38} };
+    const g = workWireProjection(b,26), guide = coverPunchLayout(b);
+    assert.deepEqual(g.centers,guide.centers);
+    assert.equal(g.ends, undefined);
+    assert.equal(g.runs.length,3);
+    g.runs.forEach((ring, i) => {
+      assert.deepEqual(ring[0],[guide.reach,guide.stations[i]]);
+      assert.ok(Math.abs(Math.min(...ring.map(([x])=>x)) + 30.5) < .00001);
+      assert.ok(Math.abs(ring.at(-1)[0]) < .00001);
+    });
+    assert.ok(g.bounds[0] <= 0 && g.bounds[1]<=0 && g.bounds[0]+g.bounds[2]>=120 && g.bounds[1]+g.bounds[3]>=175);
+  }
+  assert.equal(workWireProjection({bindingType:'ring',bookForm:'cards'}, 2),null);
+  assert.equal(workWireProjection({bindingType:'hardcover'}, 20),null);
 });
 
 test('an inset top-bound leaf cannot move a punch away from the cover hole', () => {

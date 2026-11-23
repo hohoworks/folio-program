@@ -14,7 +14,7 @@ await mkdir(new URL('assets/', mockup), { recursive: true });
 await Promise.all([
   ...['style.css', 'book-material.js', 'book-photo.js', 'mockup-options.js', 'book-surfaces.css', 'book-surfaces.js', 'saddle-material.js', 'book-format.js', 'assets/sewn-signatures.webp'].map(file =>
     copyFile(new URL('../dist/' + file, import.meta.url), new URL(file, mockup))),
-  ...['project-tags.js', 'project-media.js'].map(file =>
+  ...['project-tags.js', 'project-media.js', 'work-url.js'].map(file =>
     copyFile(new URL('../dist/' + file, import.meta.url), new URL('../admin/public/' + file, import.meta.url))),
   ...files.map(file => copyFile(new URL('build/' + file.replace('.mjs', '.min.mjs'), packageRoot), new URL(file, output))),
   ...directories.map(directory => cp(new URL(directory + '/', packageRoot), new URL(directory + '/', output), { recursive: true })),

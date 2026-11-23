@@ -13,7 +13,7 @@ const programFiles = [
     'upload-request.js', 'media-order.js', 'image-encoding.js', 'pdf-layout.js', 'mockup-controls.js', 'mockup-preview.js', 'mockup-preview.css', 'book-construction.js', 'card-editor.js'].map(name => 'admin/public/' + name),
   ...['build-admin.mjs', 'build-public.mjs', 'build-public.test.mjs', 'check-site.mjs',
     'local-admin.mjs', 'local-store.mjs', 'local-store.test.mjs', 'prepare-repositories.mjs',
-    'prepare-repositories.test.mjs', 'punctuation.test.mjs', 'split-bootstrap.test.mjs', 'book-format.test.mjs', 'book-import.test.mjs', 'book-surfaces.test.mjs'].map(name => 'scripts/' + name),
+    'prepare-repositories.test.mjs', 'punctuation.test.mjs', 'split-bootstrap.test.mjs', 'book-format.test.mjs', 'book-import.test.mjs', 'book-surfaces.test.mjs', 'work-navigation.test.mjs'].map(name => 'scripts/' + name),
   'templates/content/build-site.mjs', 'templates/content/README.md', 'templates/content/.gitignore',
   ...programDistributionFiles.map(name => 'dist/' + name),
 ];

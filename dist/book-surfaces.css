@@ -123,6 +123,29 @@
   transition: opacity var(--shelf-face-arrive);
 }
 .shelf-book.is-preview .shelf-hardware { opacity: 1; transition: opacity var(--shelf-face-arrive); }
+/* Center the complete printed sheet and its hardware. The art keeps its own trim box. */
+.work-wire-cover {
+  position: relative;
+  isolation: isolate;
+  aspect-ratio: var(--work-wire-ratio);
+  --work-wire-edge: color-mix(in srgb, var(--work-wire-color) 64%, #171a1b);
+  --work-wire-light: color-mix(in srgb, var(--work-wire-color) 55%, #fffaf0);
+}
+.project-visual.work-wire-cover > .asset-image, .editorial-images .work-wire-cover > .asset-image {
+  position: absolute;
+  left: var(--work-wire-x);
+  top: var(--work-wire-y);
+  width: var(--work-wire-w);
+  height: var(--work-wire-h);
+  object-fit: fill;
+}
+.work-wire-ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
 .shelf-book.is-preview .shelf-wire-spine { opacity: 0; transition: opacity var(--shelf-face-leave); }
 .book-model[data-variable-block] { --sheet-depth: calc(var(--depth) - min(1.2px, var(--depth) * .13)); }
 .stage[data-binding="hardcover"] .book-model[data-variable-block],

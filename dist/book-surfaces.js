@@ -94,7 +94,7 @@ function paintScan(face, cut, treatment, start, end) {
   const crop = treatment.crop ?? { x: 0, y: 0, width: 100, height: 100 };
   const frame = svgElement('svg', { ...attrs, width: 100, height: 100,
     viewBox: [crop.x, crop.y, crop.width, crop.height].join(' ') }, rotated);
-  svgElement('image', { ...attrs, href: treatment.imageSrc, width: 100, height: 100 }, frame);
+  svgElement('image', { ...attrs, href: new URL(treatment.imageSrc, import.meta.url).href, width: 100, height: 100 }, frame);
 }
 
 function paintFace(face, cut, state, start = 0, end = 1) {
@@ -262,6 +262,127 @@ export function wireGeometry(binding, details, positions, size, depth, steps = 1
     local: [reach, station, face * half], xyz: [...guide.centers[i], face * half], face,
   })));
   return { ...guide, rings, holes, rz, r, depth, firstTip: angles.indexOf(-tip), lastTip: angles.indexOf(tip) };
+}
+
+// The Works grid is a still, head-on product view. Keep a little depth in the
+// metal along the binding axis while leaving the printed cover exactly square.
+function frontWireRuns(points, half, tilt) {
+  const runs = [];
+  let run;
+  const project = ([x, y, z]) => [x, y + tilt * (z - half)];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const limits = [0, 1];
+    // Between these crossings the segment is wholly visible or wholly hidden.
+    for (const [axis, plane] of [[0, 0], [2, half]]) {
+      const t = (plane - a[axis]) / (b[axis] - a[axis]);
+      if (t > 0 && t < 1) limits.push(t);
+    }
+    limits.sort((first, second) => first - second);
+    const at = t => a.map((v, axis) => v + (b[axis] - v) * t);
+    for (let j = 1; j < limits.length; j++) {
+      if (limits[j] === limits[j - 1]) continue;
+      const [x, , z] = at((limits[j] + limits[j - 1]) / 2);
+      if (x >= 0 && z < half) { run = undefined; continue; }
+      const p = project(at(limits[j - 1])), q = project(at(limits[j]));
+      if (Math.hypot(q[0] - p[0], q[1] - p[1]) < .00001) continue;
+      if (!run) { run = [p]; runs.push(run); }
+      run.push(q);
+    }
+  }
+  return runs;
+}
+
+// Both clipped ends turn back under the cover. Dimensions follow the coil and
+// its pitch so changing the ring count does not lengthen the tips into a neighbour.
+function tuckedEnds(guide, diameter) {
+  const extent = (diameter - guide.reach) * .34;
+  const pitch = Math.min(guide.pitch, diameter * .44);
+  const first = guide.stations[0], last = guide.stations.at(-1);
+  function tip(station, direction) {
+    const xy = (u, y) => round(u < 0 ? u * extent : u * guide.reach) + ' ' + round(station + direction * y * pitch);
+    const root = xy(.55, .097), bend = xy(-1, .029), shoulder = xy(-.718, -.248);
+    const returnToCover = 'C' + xy(-.932, .284) + ' ' + xy(-.422, .090) + ' ' + root;
+    return {
+      rear: 'M' + bend + returnToCover,
+      top: 'M' + root + 'C' + xy(-.422,.090) + ' ' + xy(-.932,.284) + ' ' + bend +
+        'C' + xy(-1.069,-.224) + ' ' + xy(-.889,-.279) + ' ' + shoulder +
+        'C' + xy(-.453,-.201) + ' ' + xy(-.137,-.136) + ' ' + xy(.54,-.085),
+      front: 'M' + xy(1,0) + 'C' + xy(.38,-.080) + ' ' + xy(-.410,-.194) + ' ' + shoulder +
+        'C' + xy(-.889,-.279) + ' ' + xy(-1.069,-.224) + ' ' + bend,
+    };
+  }
+  const upper = tip(first, 1), lower = tip(last, -1);
+  return { rear: upper.top + lower.rear, front: lower.front };
+}
+
+export function workWireProjection(book, depth) {
+  if (book.bookForm === 'cards' || !['spiral','ring'].includes(book.bindingType)) return null;
+  const kind = book.bindingType, d = resolveMockupDetails(book.mockupDetails);
+  const geom = wireGeometry(kind, d, book.ringPositions, trimSize(book), depth, 64);
+  const { width, height, side, wire, radius, centers, length, reach } = geom;
+  let runs, ends;
+  if (kind === 'spiral') {
+    const spiral = geom.rings.flatMap((loop, i) => loop.slice(i ? 1 : geom.firstTip,
+      i === geom.rings.length - 1 ? geom.lastTip + 1 : loop.length).map(point => point.local));
+    // Replace just the two cut ends. Every complete winding retains its full diameter.
+    runs = frontWireRuns(spiral, depth / 2, .026).slice(1, -1);
+    ends = tuckedEnds(geom, d.ringDiameterMm);
+  } else {
+    runs = geom.rings.flatMap(loop => {
+      const parts = frontWireRuns(loop.map(point => point.local), depth / 2, .105);
+      // The independent ring begins and ends at the same point outside the spine.
+      if (parts.length > 1) parts[0] = parts.pop().concat(parts[0].slice(1));
+      return parts;
+    });
+  }
+  const outer = d.ringDiameterMm - reach + wire;
+  const padding = Math.min(6, width * .05, height * .05);
+  // Include the metal's shallow projection at extreme, custom O-ring stations.
+  const along = runs.flat();
+  let lo = 0, hi = length;
+  for (const [,y] of along) { lo = Math.min(lo, y - wire); hi = Math.max(hi, y + wire); }
+  const vertical = side === 'left' || side === 'right';
+  const left = vertical ? (side === 'left' ? -outer : 0) : lo;
+  const top = vertical ? lo : (side === 'top' ? -outer : 0);
+  const frameWidth = (vertical ? width + outer : hi - lo) + 2 * padding;
+  const frameHeight = (vertical ? hi - lo : height + outer) + 2 * padding;
+  return { width, height, side, radius, wire, centers, outer, lo, hi, runs, ends, color: d.ringColor,
+    bounds: [left - padding, top - padding, frameWidth, frameHeight] };
+}
+
+export function addWorkWire(parent, book, depth) {
+  const view = workWireProjection(book, depth);
+  if (!view) return;
+  const { width, height, side, bounds, wire, centers, outer, lo, hi, ends } = view;
+  const [x,y,w,h] = bounds;
+  parent.classList.add('work-wire-cover');
+  for (const [k,v] of Object.entries({ x: percent(-x / w), y: percent(-y / h), w: percent(width / w),
+    h: percent(height / h), ratio: w / h, color: view.color })) parent.style.setProperty('--work-wire-' + k, v);
+  const svg = pathSVG(parent, 'work-wire-ink', bounds);
+  const matrix = { left:'', right:`translate(${width} 0) scale(-1 1)`, top:'matrix(0 1 1 0 0 0)', bottom:`matrix(0 -1 1 0 0 ${height})` }[side];
+  const edgeGroup = () => svgElement('g', { transform: matrix }, svg);
+  function metal(group, data, back = false) {
+    if (!data) return;
+    const strokes = [['var(--work-wire-edge)',1.12],['var(--work-wire-color)',back ? .60 : .78]];
+    if (!back) strokes.push(['var(--work-wire-light)',.22]);
+    for (const [color, scale] of strokes) svgElement('path', { d: data, fill:'none', stroke:color,
+      'stroke-width':wire * scale, 'stroke-linejoin':'round', 'stroke-linecap':'round' }, group);
+  }
+  if (ends) {
+    const clipId = 'wire-tuck-' + ++wireFinishId;
+    const clip = svgElement('clipPath', { id:clipId }, svgElement('defs', {}, svg));
+    svgElement('rect', { x:-outer-2, y:lo-2, width:outer+2, height:hi-lo+4 }, clip);
+    metal(svgElement('g', { 'clip-path':'url(#'+clipId+')' }, edgeGroup()), ends.rear, true);
+  }
+  const holes = svgElement('g', { class:'work-wire-holes' }, svg);
+  for (const [cx,cy] of centers) svgElement('circle', { cx, cy, r:view.radius * .89,
+    fill:'#302f2c', stroke:'#69635a', 'stroke-width':view.radius * .22 }, holes);
+  const ink = edgeGroup();
+  const line = points => 'M' + points.map(([u,t]) => round(u) + ' ' + round(t)).join('L');
+  metal(ink, view.runs.map(line).join(''));
+  if (ends) metal(ink, ends.front);
+  return view;
 }
 
 // Intersect a camera ray with the paper block in book coordinates. The wire is

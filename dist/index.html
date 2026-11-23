@@ -9,23 +9,23 @@
   <meta name="theme-color" content="#ffffff">
   <meta name="description" content="책과 디자인 작업을 모아 둔 포트폴리오.">
   <title>포트폴리오</title>
-  <script src="./site-language.js"></script>
-  <link rel="icon" type="image/svg+xml" href="./assets/folio.svg">
-  <link rel="stylesheet" href="./style.css">
-  <link rel="stylesheet" href="./book-surfaces.css">
-  <link rel="stylesheet" href="./mobile-reader.css">
+  <script src="/site-language.js"></script>
+  <link rel="icon" type="image/svg+xml" href="/assets/folio.svg">
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/book-surfaces.css">
+  <link rel="stylesheet" href="/mobile-reader.css">
 </head>
 <body>
-  <script async src="./web-fonts.js"></script>
+  <script async src="/web-fonts.js"></script>
   <div class="site-shell">
   <header class="site-header">
-    <a href="#project" class="wordmark" aria-label="홈"></a>
+    <a href="/#project" class="wordmark" aria-label="홈"></a>
     <div class="header-controls">
     <nav class="site-menu" aria-label="주 메뉴">
-      <a href="#about">소개</a>
-      <a id="project-menu" href="#project" aria-current="page">작업</a>
-      <a href="#bookshelf">책장</a>
-      <a href="#contact">연락처</a>
+      <a href="/#about">소개</a>
+      <a id="project-menu" href="/#project" aria-current="page">작업</a>
+      <a href="/#bookshelf">책장</a>
+      <a href="/#contact">연락처</a>
     </nav>
     <div id="language-switch" class="language-switch">
       <button id="language-toggle" type="button">
@@ -103,12 +103,12 @@
     </section>
 
     <section id="project-viewer" class="project-viewer" aria-labelledby="project-title" hidden>
-      <nav class="view-bar" aria-label="작업 탐색"><a id="project-back" class="section-back" href="#project">← Project</a></nav>
+      <nav class="view-bar" aria-label="작업 탐색"><a id="project-back" class="section-back" href="/#project">← Project</a></nav>
       <div id="project-detail-content"></div>
     </section>
 
     <section id="book-viewer" data-mode="cover" aria-labelledby="book-title" hidden>
-      <nav class="view-bar" aria-label="책 탐색"><a id="library-back" class="section-back" href="#bookshelf">← Book shelf</a></nav>
+      <nav class="view-bar" aria-label="책 탐색"><a id="library-back" class="section-back" href="/#bookshelf">← Book shelf</a></nav>
       <div class="book-layout">
         <section id="stage" class="stage" data-mode="cover" aria-label="책 뷰어">
           <div id="cover-view" class="cover-view">
@@ -169,6 +169,6 @@
   </main>
   </div>
 
-  <script src="./viewer.js" type="module"></script>
+  <script src="/viewer.js" type="module"></script>
 </body>
 </html>

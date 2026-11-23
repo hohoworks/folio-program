@@ -55,6 +55,13 @@
                 <label for="description-en">영문 소개 <span>선택</span></label><textarea id="description-en" name="description-en" lang="en" rows="5" maxlength="6000"></textarea>
               </div>
             </div>
+            <label for="work-slug">공유 주소</label>
+            <div class="work-slug-row">
+              <span aria-hidden="true">/work/</span>
+              <input id="work-slug" name="slug" type="text" lang="en" dir="ltr" maxlength="64" autocapitalize="none" autocomplete="off" spellcheck="false" placeholder="작업 이름" aria-describedby="work-slug-help work-slug-preview">
+            </div>
+            <p class="help" id="work-slug-help">새 작업은 영문 제목으로 주소를 제안합니다. 직접 바꿀 수 있고, 저장 후에는 이전 주소도 같은 작업을 엽니다.</p>
+            <p class="help" id="work-slug-preview"></p>
             <div class="language-fields">
               <div><label for="category">작업 형식 · 국문 표기 <span>선택</span></label><input id="category" name="category" type="text" maxlength="100" placeholder="사진 에세이" aria-describedby="work-format-help"></div>
               <div><label for="category-en">작업 형식 · 영문 표기 <span>선택</span></label><input id="category-en" name="category-en" type="text" lang="en" maxlength="100" placeholder="Photo essay" aria-describedby="work-format-help"></div>
