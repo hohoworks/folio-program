@@ -3,6 +3,7 @@ import { setBookMaterial, mockupViews } from './book-material.js';
 import { createCurl, createCardTurn } from './curl.js';
 import { cardFaces, leafGeometry, physicalSpreads } from './book-format.js';
 import { createMobileReader } from './mobile-reader.js';
+import { addReaderWire } from './book-surfaces.js';
 import { createShelf } from './shelf.js';
 import { titleLanguage, alignDetailTitle } from './title-language.js';
 import { DEFAULT_SITE_TITLE, localizedSiteTitles } from './site-title.js';
@@ -192,9 +193,9 @@ function createPage(index) {
   }
   const page = document.createElement('article');
   page.tabIndex = -1;
+  page.dataset.page = index;
   if (activeBook.coverImages) {
     page.className = 'paper paper-scan';
-    page.dataset.page = index;
     page.setAttribute('aria-label', scanLabel(index));
     if (data.rightImageSrc) page.classList.add('joined-scan');
     for (const src of scanImages(data)) addAssetImage(page, src);
@@ -302,6 +303,7 @@ function createSpread(index) {
   element.dataset.first = pair.left || pair.right;
   element.dataset.spreadIndex = index;
   element.setAttribute('aria-label', pageLabel(spreadLabel(index)));
+  addReaderWire(element, activeBook, pair, geometry);
   return { element, left, right };
 }
 

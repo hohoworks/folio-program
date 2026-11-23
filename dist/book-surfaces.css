@@ -54,24 +54,20 @@
   transform-style: preserve-3d;
   pointer-events: none;
 }
-[data-wire-bound] {
+[data-wire-bound], .model-wire-ink {
   --wire-shadow: color-mix(in srgb, var(--wire-color) 63%, #171717);
   --wire-light: color-mix(in srgb, var(--wire-color) 63%, white);
 }
-.wire-segment {
-  position: absolute;
-  height: var(--wire-gauge);
-  transform-origin: 0 0;
-  transform-style: preserve-3d;
-}
-.wire-segment::before, .wire-segment::after {
-  content: '';
+.model-frame:has(> .model-wire-ink) { transform-style: flat; }
+.model-wire-ink {
   position: absolute;
   inset: 0;
-  border-radius: 35%;
-  background: linear-gradient(to bottom, var(--wire-shadow), var(--wire-light) 30%, var(--wire-color) 64%, var(--wire-shadow));
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
 }
-.wire-segment::after { transform: rotateX(90deg); }
 .shelf-hardware { opacity: 0; transition: opacity .48s; }
 .shelf-book[data-wire-bound] .shelf-spine { display: none; }
 .shelf-book[data-wire-bound]:not(.is-preview) {
@@ -133,7 +129,7 @@
 .shelf-book.is-preview:has(.shelf-leaves) { width: var(--shelf-leaf-width); }
 .stage[data-uploaded] .book-model[data-card-stock] .back:not(.artwork) { background: var(--paper-color, #fff); }
 .book-model[data-card-stock] .back:not(.artwork) > span { display: none; }
-.shelf-book[data-proportional]:is([data-wire-bound], :has(.shelf-leaves)) {
+.shelf-book[data-proportional]:is([data-wire-bound].is-preview, :has(.shelf-leaves)) {
   --book-height: calc(min(var(--shelf-height) * .74, 66cqw / var(--shelf-book-ratio)) * var(--physical-fit, 1));
 }
 .shelf-book.is-preview:is([data-wire-bound], :has(.shelf-leaves)) {
