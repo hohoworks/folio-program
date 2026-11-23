@@ -4,6 +4,7 @@ import { mockupViews, trimSize, validBookColor } from '../dist/book-material.js'
 import { bookLeafGeometry, validCardStock, validCoverStock, validFaceSize, validLeafLayout, validSaddleSections } from '../dist/book-format.js';
 import { mockupDetailFields, validMockupDetail } from '../dist/mockup-options.js';
 import { DEFAULT_SITE_TITLE, migrateStarterSite } from '../dist/site-title.js';
+import { assignWorkSlugs, availableWorkSlug, normalizeWorkSlug } from '../dist/work-url.js';
 
 const sessionCookie = '__Host-folio-admin';
 const sessionDuration = 4 * 60 * 60;
@@ -396,8 +397,14 @@ function normalizeCatalog(catalog) {
   const ids = new Set(items.map(item => item.id));
   const order = [...new Set(Array.isArray(catalog.order) ? catalog.order.filter(id => ids.has(id)) : [])];
   const orderedIds = new Set(order);
+  let resolved;
+  try {
+    resolved = assignWorkSlugs(items);
+  } catch (error) {
+    throw new RequestError(502, error.message);
+  }
   return {
-    ...catalog, projects,
+    ...catalog, books: resolved.slice(0, catalog.books.length), projects: resolved.slice(catalog.books.length),
     order: [...order, ...items.map(item => item.id).filter(id => !orderedIds.has(id))],
     site: siteDefaults(catalog.site),
   };
@@ -1181,6 +1188,16 @@ async function saveItem(request, env, kind) {
     assignTagIds(item, data.tagIds, existing, kind, catalog.site.projectTags, retrying);
     const otherItems = [...catalog.books, ...catalog.projects].filter(entry => entry.id !== existing?.id);
     if (otherItems.some(entry => entry.id === item.id)) throw new RequestError(409, '이미 사용 중인 작품 번호입니다.');
+    // Re-evaluate ownership against each fresh snapshot when a concurrent publish wins.
+    const slug = data.slug === undefined ? existing?.slug ?? availableWorkSlug(item, otherItems) : normalizeWorkSlug(data.slug);
+    if (!slug) throw new RequestError(422, '작품 주소는 영문 소문자, 숫자, 하이픈으로 1~64자까지 입력해주세요. index와 404는 사용할 수 없습니다.', undefined, 'INVALID_WORK_SLUG');
+    if (otherItems.some(other => other.slug === slug || other.slugAliases?.includes(slug))) {
+      throw new RequestError(409, '다른 작품이 현재 사용하거나 이전에 사용한 주소입니다. 다른 주소를 입력해주세요.', undefined, 'WORK_SLUG_CONFLICT');
+    }
+    item.slug = slug;
+    if (existing && existing.slug !== slug) {
+      item.slugAliases = [...(existing.slugAliases ?? []).filter(alias => alias !== slug), existing.slug];
+    }
     catalog[collection] = existing ? entries.map(entry => entry.id === item.id ? item : entry) : [...entries, item];
     if (!existing) catalog.order.push(item.id);
     return {
@@ -1330,7 +1347,7 @@ async function handle(request, env) {
   if (pathname === '/api/delete' && request.method === 'POST') return deleteItem(request, env);
   if (pathname === '/api/order' && request.method === 'POST') return reorderItems(request, env);
   if ((request.method === 'GET' || request.method === 'HEAD') &&
-      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/project-media.js', '/media-order.js', '/image-encoding.js', '/pdf-layout.js', '/mockup-controls.js', '/mockup-preview.js', '/mockup-preview.css', '/book-construction.js', '/card-editor.js'].includes(pathname) || pathname.startsWith('/vendor/'))) {
+      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/project-media.js', '/work-url.js', '/media-order.js', '/image-encoding.js', '/pdf-layout.js', '/mockup-controls.js', '/mockup-preview.js', '/mockup-preview.css', '/book-construction.js', '/card-editor.js'].includes(pathname) || pathname.startsWith('/vendor/'))) {
     return staticAsset(url, request, env, pathname);
   }
   throw new RequestError(404, '요청한 페이지를 찾을 수 없습니다.');
