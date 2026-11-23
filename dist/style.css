@@ -704,7 +704,7 @@ h1:focus { outline: none; }
   --shelf-motion: 460ms cubic-bezier(.33, 0, .26, 1);
   --shelf-face-arrive: 300ms cubic-bezier(.12, .78, .3, 1);
   --shelf-face-leave: 460ms cubic-bezier(.68, 0, .9, .16);
-  --shelf-clearance: max(6px, var(--ribbon-clearance, 0px));
+  --shelf-clearance: var(--ribbon-clearance, 0px);
   display: flex;
   align-items: end;
   justify-content: safe center;
@@ -714,7 +714,7 @@ h1:focus { outline: none; }
   width: 100%;
   padding-inline: 8px;
   scrollbar-width: none;
-  /* Extend the scrollport below the shelf line without moving the books. */
+  /* The shelf line clips the books. Only an open bookmark needs space below it. */
   padding-bottom: var(--shelf-clearance);
   margin-bottom: calc(-1 * var(--shelf-clearance));
   overflow: auto hidden;
@@ -746,9 +746,18 @@ h1:focus { outline: none; }
   --spine-width: var(--visible-spine);
   --face-width: calc(var(--book-height) * var(--shelf-book-ratio));
 }
-.shelf-book:focus-visible { z-index: 2; }
-/* Hidden cover hardware should not enlarge the horizontal scrollport. */
-.shelf-book:not(.is-preview) { overflow: clip; overflow-clip-margin: 4px; }
+.shelf-book:focus-visible { z-index: 2; outline: none; }
+.shelf-book:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border: 2px solid var(--link);
+  box-shadow: inset 0 0 0 1px var(--canvas);
+  pointer-events: none;
+}
+/* Closed artwork and hardware must fit inside their own spine slot. */
+.shelf-book:not(.is-preview) { overflow: clip; }
 .shelf-spine, .shelf-cover {
   position: absolute;
   inset: 0 auto 0 0;
