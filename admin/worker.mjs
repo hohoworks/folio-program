@@ -1,7 +1,7 @@
 import { MAX_PROJECT_VIDEO_BYTES, isProjectVideoPath, projectEmbedURL, projectMedia } from '../dist/project-media.js';
 import { STOCK_PROJECT_TAGS, idsFor } from '../dist/project-tags.js';
 import { mockupViews, trimSize, validBookColor } from '../dist/book-material.js';
-import { validCardStock, validFaceSize, validLeafLayout } from '../dist/book-format.js';
+import { bookLeafGeometry, validCardStock, validCoverStock, validFaceSize, validLeafLayout, validSaddleSections } from '../dist/book-format.js';
 import { mockupDetailFields, validMockupDetail } from '../dist/mockup-options.js';
 import { DEFAULT_SITE_TITLE, migrateStarterSite } from '../dist/site-title.js';
 
@@ -811,15 +811,26 @@ function storeCards(cards, existing, prefix, addImage) {
 
 function storeConstruction(item, data, assets, addImage) {
   const count = item.pages.length / (item.joinSplitPages ? 2 : 1);
-  for (const key of ['cardStock', 'leafLayout', 'edgeBands', 'ringPositions']) {
+  if (data.coverStock != null && (item.bookForm === 'cards' || !validCoverStock(data.coverStock))) {
+    throw new RequestError(400, '제본책 표지의 합지 색상과 각 층의 두께를 확인해주세요.');
+  }
+  const saddle = item.bindingType === 'saddle-stitch' && item.bookForm !== 'cards';
+  if (data.saddleSections != null && !saddle) throw new RequestError(400, '분책 설정은 중철 소책자에서 사용할 수 있습니다.');
+  for (const key of ['coverStock', 'cardStock', 'saddleSections', 'leafLayout', 'edgeBands', 'ringPositions']) {
     if (data[key] === null) delete item[key];
     else if (data[key] !== undefined) item[key] = data[key];
+  }
+  if (saddle && item.saddleSections !== undefined && !validSaddleSections(item.saddleSections, count)) {
+    throw new RequestError(400, '중철 소책자의 판형·색상과 쪽수를 확인해주세요. 각 권의 쪽수 합은 등록한 내지 ' + count + '쪽과 같아야 합니다.');
   }
   if (item.cardStock !== undefined && !validCardStock(item.cardStock, Math.ceil(count / 2))) {
     throw new RequestError(400, '카드 모서리, 합지 색상과 두께, 대표 카드 번호를 확인해주세요.');
   }
   if (item.leafLayout !== undefined && !validLeafLayout(item.leafLayout, Math.ceil(count / 2), trimSize(item), item.pages)) {
     throw new RequestError(400, '장별 재단 판형과 시작·끝 장을 확인해주세요.');
+  }
+  if (saddle && item.saddleSections && item.leafLayout && !bookLeafGeometry(item, item.pages, count)) {
+    throw new RequestError(400, '소책자 판형에 장별 재단을 적용한 결과가 측정 가능한 크기인지 확인해주세요.');
   }
   if (item.edgeBands !== undefined) {
     if (!Array.isArray(item.edgeBands) || item.edgeBands.length > maxPages || item.edgeBands.some(band => !isRecord(band) ||

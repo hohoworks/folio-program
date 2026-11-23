@@ -11,6 +11,7 @@ import worker from './worker.mjs';
 import { MAX_PROJECT_VIDEO_BYTES } from '../dist/project-media.js';
 import { STOCK_PROJECT_TAGS } from '../dist/project-tags.js';
 import { DEFAULT_SITE_TITLE } from '../dist/site-title.js';
+import { loadBooks } from '../dist/catalog.js';
 import { planPdfPages, remainingPdfPages } from './public/pdf-layout.js';
 
 const origin = 'https://admin.folio.example';
@@ -594,6 +595,75 @@ test('book finishing settings survive partial updates and can be reset without u
   assert.equal(Object.hasOwn(state.catalog.books[0], 'mockupDetails'), false);
   assert.deepEqual(state.catalog.books[0].pages, legacyBook.pages);
   assert.deepEqual(state.catalog.books[0].coverImages, legacyBook.coverImages);
+});
+
+test('bound cover plies and saddle booklets survive partial edits and publication without changing legacy books', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'hoho-cover-stock-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const content = join(root, 'content'), staging = join(root, 'uploads'), output = join(root, 'public');
+  await mkdir(content);
+  await writeFile(join(content, 'catalog.json'), JSON.stringify({ books: [], projects: [] }));
+  const bindings = { ...env, LOCAL_STORE: await createLocalStore(content, staging) };
+  const cookie = await session();
+  const post = (path, body, headers) => request(path, { method: 'POST', cookie, body, headers }, bindings);
+  const bytes = await readFile(new URL('../dist/assets/forest-cover.webp', import.meta.url));
+  const upload = await (await post('/api/assets', bytes, { 'Content-Type': 'image/webp' })).json();
+  const stock = { layers: ['#dd4433', '#ffeedc', '#224466'], layerThicknessMm: [.25, .73, .32] };
+  const create = (title, extra) => post('/api/books', { title, registrationId: crypto.randomUUID(),
+    pageRatio: upload.ratio, coverRatio: upload.ratio, assets: { front: upload, pages: [upload] }, ...extra });
+  const save = async (title, extra) => {
+    const response = await create(title, extra);
+    assert.equal(response.status, 201);
+    return (await response.json()).book;
+  };
+  const legacy = await save('Ordinary book', {});
+  const hidden = await save('Private book', { published: false, coverStock: stock });
+  const sections = [{ pages: 1, color: '#224466' }, { pages: 3, sizeMm: [90, 150] }];
+  const hardware = { stitchType: 'loop', stapleCount: 1, stapleInsetPercent: 12 };
+  const initial = await save('Laminated cover', {
+    bindingType: 'saddle-stitch', coverStock: stock, saddleSections: sections, mockupDetails: hardware,
+    assets: { front: upload, pages: Array(4).fill(upload) },
+  });
+  const edit = (baseRevision, extra) => post('/api/books', { id: initial.id, baseRevision, registrationId: crypto.randomUUID(), ...extra });
+  assert.deepEqual(initial.coverStock, stock);
+  assert.equal((await edit(initial.revision, { coverStock: { layers: stock.layers } })).status, 400);
+  assert.equal((await edit(initial.revision, { bindingType: 'paperback', saddleSections: sections })).status, 400);
+  assert.equal((await edit(initial.revision, { saddleSections: [{ pages: 5 }] })).status, 400);
+  assert.equal((await edit(initial.revision, { joinSplitPages: true })).status, 400);
+  assert.equal((await edit(initial.revision, { mockupDetails: { stapleInsetPercent: 45.1 } })).status, 400);
+  assert.equal((await create('Invalid deck', { bookForm: 'cards', coverStock: stock,
+    assets: { cards: [{ front: upload, back: upload }] } })).status, 400);
+  const edited = await edit(initial.revision, { title: 'Edited book' });
+  assert.equal(edited.status, 200);
+  const saved = (await edited.json()).book;
+  assert.deepEqual(saved.coverStock, stock);
+  assert.deepEqual(saved.saddleSections, sections);
+  assert.deepEqual(saved.mockupDetails, hardware);
+  assert.deepEqual(saved.coverImages, initial.coverImages);
+  assert.deepEqual(saved.pages, initial.pages);
+  assert.equal((await edit(initial.revision, { coverStock: null })).status, 409);
+  bindings.LOCAL_STORE = await createLocalStore(content, staging);
+  const privateCatalog = await (await request('/api/catalog', { cookie }, bindings)).json();
+  assert.deepEqual(privateCatalog.books, [legacy, hidden, saved]);
+  await buildPublic(fileURLToPath(new URL('../', import.meta.url)), { contentDir: content, outputDir: output });
+  const published = await readFile(join(output, 'catalog.json'), 'utf8');
+  t.mock.method(globalThis, 'fetch', () => Promise.resolve(new Response(published)));
+  const visitors = await loadBooks();
+  assert.deepEqual(visitors.map(book => book.id), [legacy.id, saved.id]);
+  assert.equal('coverStock' in visitors[0], false);
+  assert.deepEqual(visitors[1].coverStock, stock);
+  assert.deepEqual(visitors[1].saddleSections, sections);
+  assert.equal(visitors[1].mockupDetails.stitchType, 'loop');
+  assert.equal(visitors[1].mockupDetails.stapleInsetPercent, 12);
+  const restored = await edit(saved.revision, { joinSplitPages: true, saddleSections: [{ pages: 1 }, { pages: 1 }] });
+  assert.equal(restored.status, 200);
+  const repaired = (await restored.json()).book;
+  assert.deepEqual(repaired.saddleSections, [{ pages: 1 }, { pages: 1 }]);
+  const removed = await edit(repaired.revision, { coverStock: null, saddleSections: null });
+  assert.equal(removed.status, 200);
+  const ordinary = (await removed.json()).book;
+  assert.equal('coverStock' in ordinary, false);
+  assert.equal('saddleSections' in ordinary, false);
 });
 
 test('legacy book edits preserve omitted data, remove owned obsolete files, reject stale revisions and replay safely', async t => {
