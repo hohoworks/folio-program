@@ -1,7 +1,7 @@
 import { loadCatalog, readerSpreads, trimSize } from './catalog.js';
 import { setBookMaterial, mockupViews } from './book-material.js';
 import { createCurl, createCardTurn } from './curl.js';
-import { cardFaces, leafGeometry, physicalSpreads } from './book-format.js';
+import { cardFaces, cardThumbnail, leafGeometry, physicalSpreads } from './book-format.js';
 import { createMobileReader } from './mobile-reader.js';
 import { addReaderWire } from './book-surfaces.js';
 import { createShelf } from './shelf.js';
@@ -773,6 +773,32 @@ function addCoverArt(cover, book, imageSrc = book.coverImages?.front) {
   appendText(cover, 'span', 'cover-bottom', DEFAULT_SITE_TITLE);
 }
 
+function addCardThumbnail(parent, book, lazy = false) {
+  const { mode, src } = cardThumbnail(book);
+  const layers = mode === 'deck' ? Math.min(3, Math.ceil(book.pages.length / 2) - 1) : 0;
+  const [width, height] = trimSize(book);
+  const radius = Math.min(book.cardStock?.cornerRadiusMm ?? 0, width / 2, height / 2);
+  const stack = appendText(parent, 'span', 'card-thumbnail', '');
+  stack.dataset.mode = mode;
+  stack.style.setProperty('--shown-layers', layers);
+  stack.style.setProperty('--card-radius', (100 * radius / width) + '% / ' + (100 * radius / height) + '%');
+  stack.style.setProperty('--card-edge', book.cardStock?.layers?.at(-1) ?? book.paperColor ?? '#efede5');
+  stack.setAttribute('aria-hidden', 'true');
+  for (let layer = layers; layer >= 0; layer--) {
+    const sheet = appendText(stack, 'span', 'card-thumbnail-sheet', '');
+    sheet.style.setProperty('--layer', layer);
+    if (!layer) {
+      const image = addAssetImage(sheet, src, { lazy, fallback: book.coverImages.front });
+      image.decoding = 'async';
+    }
+  }
+}
+
+function addShelfThumbnail(cover, book) {
+  if (book.bookForm === 'cards') addCardThumbnail(cover, book);
+  else addCoverArt(cover, book, book.thumbnailSrc);
+}
+
 function stopCoverArrival() {
   coverArrival?.cancel();
   coverArrival = undefined;
@@ -838,7 +864,7 @@ function renderShelf() {
   if (bookLinks) return;
   bookLinks = createShelf(shelf, books, {
     addAssetImage,
-    addCoverArt: (cover, book) => addCoverArt(cover, book, book.thumbnailSrc),
+    addCoverArt: addShelfThumbnail,
     reducedMotion,
     select(book, source) {
       enterBook(book, '#bookshelf', source);
@@ -861,7 +887,7 @@ function renderShelf() {
     });
     const jacket = appendText(link, 'span', 'index-jacket cover-art', '');
     jacket.setAttribute('aria-hidden', 'true');
-    addCoverArt(jacket, book, book.thumbnailSrc);
+    addShelfThumbnail(jacket, book);
     appendText(link, 'span', 'index-title', '');
     indexLinks.set(book.id, link);
     setShelfLabels(book, itemCopy(book).title);
@@ -1156,7 +1182,9 @@ function createProjectCard(entry, index) {
   const picture = appendText(link, 'span', 'project-visual', '');
   const isBook = entry.type === 'book';
   const firstImage = entry.images?.[0];
-  const ratio = isBook ? entry.coverRatio : firstImage?.ratio;
+  const isCardBook = entry.bookForm === 'cards';
+  const [trimWidth, trimHeight] = isCardBook ? trimSize(entry) : [0, 0];
+  const ratio = isCardBook ? trimWidth / trimHeight : isBook ? entry.coverRatio : firstImage?.ratio;
   // Printed books use their trim width. Other formats share a similar visual area.
   function sizePreview(aspect) {
     const widthFactor = isBook ? trimSize(entry)[0] / 220 : Math.sqrt(aspect);
@@ -1164,7 +1192,9 @@ function createProjectCard(entry, index) {
     link.style.setProperty('--preview-width-factor', widthFactor);
   }
   sizePreview(ratio || 1);
-  if (entry.type === 'book' && !entry.coverImages) {
+  if (isCardBook) {
+    addCardThumbnail(picture, entry, index > 2);
+  } else if (entry.type === 'book' && !entry.coverImages) {
     const cover = appendText(picture, 'span', 'cover-art', '');
     cover.dataset.book = entry.id;
     cover.setAttribute('aria-hidden', 'true');

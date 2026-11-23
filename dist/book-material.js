@@ -11,8 +11,10 @@ export function spineRatio(book) {
   // One sheet of book paper contributes a front and a back to the page count.
   const sheets = Math.max(1, Math.ceil((book.pageCount ?? book.pages?.length ?? 0) / 2));
   if (book.bookForm === 'cards') {
-    const plies = Math.max(1, book.cardStock?.layers?.length || 1);
-    return (book.spineWidthMm ?? Math.max(.5, sheets * .22 * plies)) / trimSize(book)[0];
+    const stock = book.cardStock;
+    const thickness = stock?.layerThicknessMm?.reduce((sum, value) => sum + value, 0);
+    const stack = thickness > 0 ? sheets * thickness : Math.max(.5, sheets * .22 * (stock?.layers?.length || 1));
+    return (book.spineWidthMm ?? stack) / trimSize(book)[0];
   }
   const paperWidth = sheets * .1;
   let estimate = Math.max(3.5, paperWidth + .5);

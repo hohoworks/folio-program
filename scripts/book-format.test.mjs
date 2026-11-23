@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  cardFaces, leafCountForBook, leafDimensions, leafGeometry, normalizeBookFormat,
+  cardFaces, cardThumbnail, leafCountForBook, leafDimensions, leafGeometry, normalizeBookFormat,
   physicalSpreads, validCardStock, validLeafLayout,
 } from '../dist/book-format.js';
 
@@ -69,4 +69,25 @@ test('cards retain explicit blank backs and append just the missing final back',
   assert.equal(validCardStock({ layers: ['#123'] }), false);
   assert.equal(validCardStock({ layers: [] }), false);
   assert.equal(validCardStock({ layers: Array(17).fill('#ffffff') }), false);
+});
+
+test('layer measurements match the color sequence; the chosen card must exist', () => {
+  const stock = { layers: ['#cceeff', '#336699'], layerThicknessMm: [.1, .45], thumbnailMode: 'single', thumbnailCard: 2 };
+  assert.ok(validCardStock(stock, 2));
+  for (const invalid of [
+    { layerThicknessMm: [.1] }, { layerThicknessMm: [0, .1] }, { layerThicknessMm: [2, 21] },
+    { layerThicknessMm: ['.2', .3] }, { thumbnailMode: 'https://example.com' }, { thumbnailCard: 3 },
+    { thumbnailCard: 1.5 }, { thumbnailSrc: 'assets/books/other/card.png' },
+  ]) assert.equal(validCardStock({ ...stock, ...invalid }, 2), false);
+  assert.equal(validCardStock({ layerThicknessMm: [.1] }), false);
+});
+
+test('a deck uses its cover, a chosen card uses its front, a legacy thumbnail is preserved', () => {
+  const book = { pages: [{ imageSrc: 'first' }, { blank: true }, { imageSrc: 'second' }],
+    coverImages: { front: 'cover' }, thumbnailSrc: 'legacy' };
+  assert.deepEqual(cardThumbnail(book), { mode: 'single', card: 1, src: 'legacy' });
+  assert.equal(cardThumbnail({ ...book, thumbnailSrc: undefined }).src, 'cover');
+  assert.deepEqual(cardThumbnail({ ...book, cardStock: { thumbnailMode: 'single', thumbnailCard: 2 } }),
+    { mode: 'single', card: 2, src: 'second' });
+  assert.equal(cardThumbnail({ ...book, cardStock: { thumbnailMode: 'deck', thumbnailCard: 2 } }).src, 'cover');
 });

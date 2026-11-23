@@ -737,7 +737,9 @@ function applyThumbnail(item, existing, assets, addImage, kind) {
   const primary = kind === 'book' ? item.coverImages.front : item.images?.[0]?.imageSrc;
   const previous = kind === 'book' ? existing?.coverImages?.front : existing?.images?.[0]?.imageSrc;
   if (assets.thumbnail === undefined) {
-    if (primary !== previous) delete item.thumbnailSrc;
+    const reorderedCards = existing?.bookForm === 'cards' && item.bookForm === 'cards' &&
+      assets.cards !== undefined && assets.front === undefined;
+    if (primary !== previous && !reorderedCards) delete item.thumbnailSrc;
     return;
   }
   delete item.thumbnailSrc;
@@ -813,7 +815,9 @@ function storeConstruction(item, data, assets, addImage) {
     if (data[key] === null) delete item[key];
     else if (data[key] !== undefined) item[key] = data[key];
   }
-  if (item.cardStock !== undefined && !validCardStock(item.cardStock)) throw new RequestError(400, '카드 모서리와 합지 색상을 확인해주세요.');
+  if (item.cardStock !== undefined && !validCardStock(item.cardStock, Math.ceil(count / 2))) {
+    throw new RequestError(400, '카드 모서리, 합지 색상과 두께, 대표 카드 번호를 확인해주세요.');
+  }
   if (item.leafLayout !== undefined && !validLeafLayout(item.leafLayout, Math.ceil(count / 2), trimSize(item), item.pages)) {
     throw new RequestError(400, '장별 재단 판형과 시작·끝 장을 확인해주세요.');
   }
@@ -946,6 +950,13 @@ function buildItem(data, existing, kind, registrationId) {
       throw new RequestError(400, '카드는 카드 앞뒷면 목록으로 등록해주세요.');
     }
     item.pages = storeCards(assets.cards, existing, prefix, addImage);
+    // Older clients can reorder cards without resubmitting construction settings.
+    // Keep the chosen front if it survives; use the first card when it was removed.
+    if (data.cardStock === undefined && existing?.cardStock?.thumbnailCard) {
+      const selected = existing.pages[(existing.cardStock.thumbnailCard - 1) * 2]?.imageSrc;
+      const face = item.pages.findIndex((page, index) => index % 2 === 0 && page.imageSrc === selected);
+      item.cardStock = { ...existing.cardStock, thumbnailCard: face < 0 ? 1 : face / 2 + 1 };
+    }
     delete item.joinSplitPages;
     delete item.pdfLayout;
     delete item.pdfSheetSides;

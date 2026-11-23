@@ -47,3 +47,10 @@ test('card deck thickness respects the layer count and an explicit measured stac
   assert.equal(spineRatio({...card,spineWidthMm:6}), .06);
   assert.equal(spineRatio({trimSizeMm:[100,150],pageCount:16,bindingType:'paperback'}), .035);
 });
+
+test('measured plies set the automatic stack depth and respect an explicit measured stack', () => {
+  const deck = { bookForm: 'cards', pageCount: 8, trimSizeMm: [100,150],
+    cardStock: { layers: ['#cccccc','#eeeeee'], layerThicknessMm: [.25,.75] } };
+  assert.equal(spineRatio(deck), .04);
+  assert.equal(spineRatio({ ...deck, spineWidthMm: 6 }), .06);
+});

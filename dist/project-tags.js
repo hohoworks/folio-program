@@ -14,5 +14,7 @@ export const STOCK_PROJECT_TAGS = [
 export function idsFor(work, kind, tags = STOCK_PROJECT_TAGS) {
   const assigned = Array.isArray(work?.tagIds) ? work.tagIds : kind === 'book' ? ['book'] : [];
   const available = new Set(tags.map(tag => tag.id));
-  return [...new Set(assigned)].filter(id => available.has(id));
+  const ids = new Set(assigned);
+  if (kind === 'book' && work?.bookForm === 'cards') ids.add('book');
+  return [...ids].filter(id => available.has(id));
 }

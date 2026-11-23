@@ -12,6 +12,7 @@ import { planPdfPages, remainingPdfPages, sidesByShape, pdfFaceSize } from './pd
 import { createConstructionEditor, cutFaces, materialPayload, resolvedLeafLayout } from './book-construction.js';
 import { createCardEditor, cardsFromPages } from './card-editor.js';
 import { trimSize } from './vendor/mockup/book-material.js';
+import { cardThumbnail } from './vendor/mockup/book-format.js';
 
 const $ = selector => document.querySelector(selector);
 const form = $('#book-form');
@@ -72,6 +73,7 @@ const cardEditor = createCardEditor({
   onPreview: updateMockup,
   changed() {
     state.registrationId = crypto.randomUUID();
+    state.metadata.construction = construction.read();
     updateView();
     persist();
   },
@@ -309,7 +311,7 @@ function updateView() {
   $('#case-color').disabled = state.metadata['auto-case-color'];
   $('#paper-color').disabled = state.metadata['auto-paper-color'];
   const cards = state.metadata['book-form-type'] === 'cards';
-  construction.update(cards);
+  construction.update(cards, state.cards.length);
   $('#card-editor').disabled = !cards || pendingFiles.size > 0;
   $('#book-form-type').disabled = pendingFiles.size > 0;
   mockupControls.update(cards ? '' : state.metadata['binding-type']);
@@ -1369,7 +1371,8 @@ function renderCatalogue() {
     metadata.textContent = [item.kind === 'book' ? '책' : '프로젝트', item.year, item.published === false ? '비공개' : '공개', labels.join(', ')].filter(Boolean).join(' · ');
     const content = document.createElement('div');
     content.append(title, metadata);
-    const thumbnailPath = item.thumbnailSrc || (item.kind === 'book' ? item.coverImages?.front : (item.media ?? item.images)?.find(entry => entry.imageSrc)?.imageSrc);
+    const thumbnailPath = item.bookForm === 'cards' ? cardThumbnail(item).src
+      : item.thumbnailSrc || (item.kind === 'book' ? item.coverImages?.front : (item.media ?? item.images)?.find(entry => entry.imageSrc)?.imageSrc);
     const thumbnail = document.createElement(thumbnailPath ? 'img' : 'span');
     thumbnail.className = 'catalogue-thumbnail';
     if (thumbnailPath) {

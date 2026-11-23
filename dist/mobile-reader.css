@@ -141,16 +141,33 @@
 .stage[data-leaf-layout] .spread > .paper-right { left: 50%; }
 .under-leaf { pointer-events: none; }
 
+/* A loose card always occupies one face centred in the available reading area. */
+.stage[data-reader-form="cards"] .reading-view { container-type: size; }
+.stage[data-reader-form="cards"] .reader-window {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  clip-path: none;
+}
+.stage[data-reader-form="cards"] .reader-window .page-area {
+  width: min(calc(100% - 20px), calc((100cqh - 20px) * var(--spread-ratio)));
+  transform: none;
+  transition: none;
+}
+@media (min-width: 681px) and (min-height: 541px), (min-width: 961px) {
+  #book-viewer[data-reader-form="cards"][data-mode="read"] {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    height: calc(100dvh - var(--header-height));
+  }
+  #book-viewer[data-reader-form="cards"][data-mode="read"] .book-layout { display: contents; }
+  #book-viewer[data-reader-form="cards"][data-mode="read"] .view-bar { grid-row: 1; }
+  #book-viewer[data-reader-form="cards"][data-mode="read"] .book-detail { grid-row: 2; }
+  #book-viewer[data-reader-form="cards"][data-mode="read"] .stage { grid-row: 3; height: auto; }
+  #book-viewer[data-reader-form="cards"][data-mode="read"] .page-navigation { grid-row: 4; }
+}
 @media (max-width: 680px) {
-  .stage[data-reader-form="cards"] .reader-window {
-    width: min(100%, 520px, calc(100cqh * var(--spread-ratio)));
-    clip-path: none;
-  }
-  .stage[data-reader-form="cards"] .reader-window .page-area {
-    width: 100%;
-    transform: none;
-    transition: none;
-  }
   #book-viewer[data-reader-form="cards"] .page-navigation { width: 100%; }
   #card-side { font-size: 16px; }
 }

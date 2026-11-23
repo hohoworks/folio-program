@@ -1445,9 +1445,10 @@ test('local card registration, reopening, reorder and publication retain scan fi
   ]);
   const registrationId = crypto.randomUUID();
   const registration = {
-    registrationId, title: 'Cards', bookForm: 'cards', cardStock: { cornerRadiusMm: 4, layers: ['#eeeeee', '#335599'] },
+    registrationId, title: 'Cards', bookForm: 'cards',
+    cardStock: { cornerRadiusMm: 4, layers: ['#eeeeee', '#335599'], layerThicknessMm: [.18, .46], thumbnailMode: 'single', thumbnailCard: 2 },
     coverRatio: first.upload.ratio, pageRatio: first.upload.ratio, edgeTreatments: { head: { mode: 'scan', rotation: 90 } },
-    assets: { edgeScans: { head: scan.upload }, cards: [
+    assets: { thumbnail: second.upload, edgeScans: { head: scan.upload }, cards: [
       { front: { ...first.upload, sizeMm: [80, 100] }, back: null },
       { front: second.upload, back: first.upload },
     ] },
@@ -1456,8 +1457,20 @@ test('local card registration, reopening, reorder and publication retain scan fi
   const saved = await created.json();
   assert.equal(created.status, 201, JSON.stringify(saved));
   const prefix = 'assets/books/cards-' + registrationId + '/';
-  const paths = [prefix + 'card-1-front.webp', prefix + 'card-2-front.jpg', prefix + 'card-2-back.webp', prefix + 'edge-head.webp'];
-  const [frontA, frontB, backB, scanPath] = paths;
+  const paths = [prefix + 'card-1-front.webp', prefix + 'card-2-front.jpg', prefix + 'card-2-back.webp', prefix + 'edge-head.webp', prefix + 'thumbnail.jpg'];
+  const [frontA, frontB, backB, scanPath, thumbnailPath] = paths;
+  assert.deepEqual(saved.book.cardStock, registration.cardStock);
+  for (const invalid of [
+    { thumbnailCard: 3 },
+    { thumbnailSrc: 'assets/books/private/other-card.webp' },
+    { layerThicknessMm: [0, .46] },
+  ]) {
+    const response = await post('/api/books', {
+      id: saved.book.id, baseRevision: saved.book.revision,
+      cardStock: { ...registration.cardStock, ...invalid }, assets: {},
+    });
+    assert.equal(response.status, 400);
+  }
   assert.equal(saved.book.coverImages.front, frontA);
   assert.deepEqual(saved.book.pages.map(face => face.imageSrc || face), [frontA, { blank: true }, frontB, backB]);
   assert.equal(saved.book.edgeTreatments.head.imageSrc, scanPath);
@@ -1473,7 +1486,9 @@ test('local card registration, reopening, reorder and publication retain scan fi
   });
   const edited = await edit.json();
   assert.equal(edit.status, 200, JSON.stringify(edited));
+  assert.deepEqual(edited.book.cardStock, { ...registration.cardStock, thumbnailCard: 1 });
   assert.equal(edited.book.coverImages.front, frontB);
+  assert.equal(edited.book.thumbnailSrc, thumbnailPath);
   assert.equal(edited.book.coverRatio, second.upload.ratio);
   assert.deepEqual(edited.book.pages[2].sizeMm, [80, 100]);
   assert.deepEqual(edited.book.pages.map(face => face.imageSrc || face), [frontB, backB, frontA, { blank: true }]);
@@ -1489,8 +1504,9 @@ test('local card registration, reopening, reorder and publication retain scan fi
   assert.deepEqual(catalogAssets(published), new Set(paths));
   assert.deepEqual(published.books[0].pages, edited.book.pages);
   assert.deepEqual(published.books[0].coverImages, edited.book.coverImages);
+  assert.deepEqual(published.books[0].cardStock, edited.book.cardStock);
   assert.deepEqual(published.books[0].edgeTreatments, edited.book.edgeTreatments);
-  for (const [path, bytes] of [[frontA, first.bytes], [frontB, second.bytes], [backB, first.bytes], [scanPath, scan.bytes]]) {
+  for (const [path, bytes] of [[frontA, first.bytes], [frontB, second.bytes], [backB, first.bytes], [scanPath, scan.bytes], [thumbnailPath, second.bytes]]) {
     assert.deepEqual(await readFile(join(output, path)), bytes);
   }
 });

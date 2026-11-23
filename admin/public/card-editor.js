@@ -51,11 +51,27 @@ export function createCardEditor({ getState, localFile, setFile, checkImage, tra
     changed();
     render();
   }
+  function selectedCard() {
+    return $('card-thumbnail-mode').value === 'single' ? cards()[$('card-thumbnail-card').valueAsNumber - 1] : undefined;
+  }
+  function updateOrder(selected) {
+    if (selected) $('card-thumbnail-card').value = Math.max(1, cards().indexOf(selected) + 1);
+    edited();
+  }
+  function markThumbnail() {
+    const selected = selectedCard();
+    for (const row of list.children) {
+      row.querySelector('.card-number').textContent = '카드 ' + row.dataset.number + (row.dataset.mediaId === selected?.id ? ' · 대표 앞면' : '');
+    }
+  }
+  $('card-thumbnail-mode').addEventListener('input', markThumbnail);
+  $('card-thumbnail-card').addEventListener('input', markThumbnail);
   function move(from, to) {
     if (to < 0 || to >= cards().length || from === to || from < 0 || list.closest('fieldset').matches(':disabled')) return;
+    const selected = selectedCard();
     const [entry] = cards().splice(from, 1);
     cards().splice(to, 0, entry);
-    edited();
+    updateOrder(selected);
     list.children[to]?.querySelector('.media-handle')?.focus({ preventScroll: true });
     $('card-notice').textContent = (to + 1) + '번째 카드로 이동했습니다.';
   }
@@ -210,18 +226,24 @@ export function createCardEditor({ getState, localFile, setFile, checkImage, tra
     cards().forEach((entry, index) => {
       const row = document.createElement('li');
       row.dataset.mediaId = entry.id;
+      row.dataset.number = index + 1;
       const caption = document.createElement('strong');
-      caption.textContent = '카드 ' + (index + 1);
+      caption.className = 'card-number';
       const tools = document.createElement('div');
       tools.className = 'item-actions';
       const handle = button('↕', '카드 ' + (index + 1) + ' 순서 변경', () => {});
       handle.classList.add('media-handle');
       tools.append(handle, caption, button('위로', '카드 위로', () => move(index, index - 1), index === 0),
         button('아래로', '카드 아래로', () => move(index, index + 1), index === cards().length - 1),
-        button('삭제', '카드 ' + (index + 1) + ' 삭제', () => { cards().splice(index, 1); edited(); }));
+        button('삭제', '카드 ' + (index + 1) + ' 삭제', () => {
+          const selected = selectedCard();
+          cards().splice(index, 1);
+          updateOrder(selected);
+        }));
       row.append(tools, faceField(entry, 'front', index), faceField(entry, 'back', index));
       list.append(row);
     });
+    markThumbnail();
   }
 
   async function prepare(signal) {

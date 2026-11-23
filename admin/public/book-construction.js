@@ -55,9 +55,11 @@ export function createConstructionEditor() {
       numberField('끝 쪽', 'end', value.end ?? value.start ?? 1, { min: 1, max: 1000, step: 1, required: true }),
       colorField('종이 색', 'color', value.color), removeButton(row, notify));
   }
-  function appendLayer(color) {
+  function appendLayer(color, thickness = 0.22) {
     const row = makeRow('card-layers', '합지 층');
-    row.append(colorField('층 색', 'color', color), removeButton(row, notify));
+    row.append(colorField('층 색', 'color', color),
+      numberField('층 두께 (mm)', 'thickness', thickness, { min: 0.01, max: 20, required: true }),
+      removeButton(row, notify));
   }
   function appendRange(value = {}, single = false) {
     const row = makeRow('leaf-ranges', single ? '개별 장' : '장 구간');
@@ -103,6 +105,13 @@ export function createConstructionEditor() {
     ['add-leaf-range', () => appendRange()], ['add-leaf-override', () => appendRange({}, true)]]) {
     $(id).addEventListener('click', () => { action(); notify(); });
   }
+  function showCardThickness() {
+    const inputs = [...$('card-layers').querySelectorAll('[data-key="thickness"]')];
+    const valid = $('card-thickness-mode').value === 'measured' && inputs.length && inputs.every(input => input.validity.valid);
+    const total = inputs.reduce((sum, input) => sum + input.valueAsNumber, 0);
+    $('card-thickness-summary').textContent = valid ? '카드 한 장 두께 ' + Number(total.toFixed(3)) + ' mm' : '';
+  }
+  $('card-layers').addEventListener('input', showCardThickness);
   function write(value = {}) {
     const { edgeTreatments = {}, edgeBands = [], cardStock, leafLayout = {}, ringPositions } = value;
     $('ring-positions').value = Array.isArray(ringPositions) ? ringPositions.join(', ') : ringPositions || '';
@@ -119,8 +128,11 @@ export function createConstructionEditor() {
     $('edge-bands').replaceChildren();
     (edgeBands || []).forEach(appendBand);
     $('card-corner').value = cardStock?.cornerRadiusMm ?? 0;
+    $('card-thickness-mode').value = cardStock?.layerThicknessMm ? 'measured' : 'auto';
+    $('card-thumbnail-mode').value = cardStock?.thumbnailMode || '';
+    $('card-thumbnail-card').value = cardStock?.thumbnailCard ?? 1;
     $('card-layers').replaceChildren();
-    (cardStock?.layers || [paper]).forEach(appendLayer);
+    (cardStock?.layers || [paper]).forEach((color, i) => appendLayer(color, cardStock?.layerThicknessMm?.[i]));
     $('leaf-source').value = leafLayout?.source || 'uniform';
     $('leaf-align').value = leafLayout?.align || 'top';
     for (const [index, axis] of ['width', 'height'].entries()) {
@@ -150,10 +162,17 @@ export function createConstructionEditor() {
       source, align: $('leaf-align').value, ranges,
       ...(source === 'custom' && { ...(first && { firstSizeMm: first }), stepMm: [number($('leaf-step-width')) || 0, number($('leaf-step-height')) || 0] }),
     };
-    return { edgeTreatments, edgeBands: readRows('edge-bands'), ringPositions: $('ring-positions').value,
-      cardStock: { cornerRadiusMm: number($('card-corner')) ?? 0, layers: readRows('card-layers').map(layer => layer.color) }, leafLayout };
+    const layers = readRows('card-layers');
+    const thumbnailMode = $('card-thumbnail-mode').value;
+    const cardStock = {
+      cornerRadiusMm: number($('card-corner')) ?? 0, layers: layers.map(layer => layer.color),
+      ...($('card-thickness-mode').value === 'measured' && { layerThicknessMm: layers.map(layer => layer.thickness ?? null) }),
+      ...(thumbnailMode && { thumbnailMode }),
+      ...(thumbnailMode === 'single' && { thumbnailCard: number($('card-thumbnail-card')) ?? null }),
+    };
+    return { edgeTreatments, edgeBands: readRows('edge-bands'), ringPositions: $('ring-positions').value, cardStock, leafLayout };
   }
-  function update(cards) {
+  function update(cards, cardCount) {
     document.querySelectorAll('[data-cards]').forEach(group => show(group, cards));
     document.querySelectorAll('[data-bound]').forEach(group => show(group, !cards));
     for (const face of Object.keys(cutFaces)) {
@@ -164,8 +183,20 @@ export function createConstructionEditor() {
     show($('leaf-settings'), $('leaf-source').value !== 'uniform');
     show($('leaf-base-fields'), $('leaf-source').value === 'custom');
     const layers = $('card-layers');
+    const measured = $('card-thickness-mode').value === 'measured';
     $('add-card-layer').disabled = layers.children.length >= 16;
-    for (const button of layers.querySelectorAll('button')) button.disabled = layers.children.length <= 1;
+    for (const [i, row] of Array.from(layers.children).entries()) {
+      row.querySelector('legend').textContent = (i + 1) + '층';
+      row.querySelector('button').disabled = layers.children.length <= 1;
+      const input = row.querySelector('[data-key="thickness"]');
+      input.disabled = !measured;
+      input.parentElement.hidden = !measured;
+    }
+    showCardThickness();
+    const single = $('card-thumbnail-mode').value === 'single';
+    $('card-thumbnail-card-row').hidden = !single;
+    $('card-thumbnail-card').disabled = !single;
+    $('card-thumbnail-card').max = Math.max(1, cardCount || 0);
   }
   function renderLeafPreview(layout, count, trim, pages) {
     if (!layout || $('leaf-options').hidden) return;
@@ -201,6 +232,12 @@ export function materialPayload(meta, pageCount, trim, pages) {
   }
   if (!cards && leafLayout && !validLeafLayout(leafLayout, Math.ceil(pageCount / 2), trim || undefined, pages)) {
     throw new Error('장별 재단 크기를 확인해주세요. 각 장의 가로·세로가 양수이고 구간이 실제 장수 안에 있어야 합니다.');
+  }
+  if (cards && cardStock.layerThicknessMm?.some(mm => !Number.isFinite(mm) || mm < 0.01 || mm > 20)) {
+    throw new Error('각 층의 두께를 0.01~20 mm 사이로 입력해주세요.');
+  }
+  if (cards && cardStock.thumbnailMode === 'single' && (!Number.isInteger(cardStock.thumbnailCard) || cardStock.thumbnailCard < 1 || cardStock.thumbnailCard > Math.ceil(pageCount / 2))) {
+    throw new Error('목록에 있는 카드 번호를 대표 카드로 지정해주세요.');
   }
   return { bookForm: cards ? 'cards' : 'bound', edgeBands, edgeTreatments, ringPositions: positions, cardStock: cards ? cardStock : null, leafLayout: cards ? null : leafLayout };
 }

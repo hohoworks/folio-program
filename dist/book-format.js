@@ -8,11 +8,27 @@ const only = (object, allowed) => Object.keys(object).every(key => allowed.inclu
 const optional = (value, test) => value === undefined || test(value);
 export const validFaceSize = value => pair(value, size);
 
-export function validCardStock(stock) {
-  return record(stock) && only(stock, ['cornerRadiusMm', 'layers']) &&
+export function validCardStock(stock, cardCount = 500) {
+  return record(stock) && only(stock, ['cornerRadiusMm', 'layers', 'layerThicknessMm', 'thumbnailMode', 'thumbnailCard']) &&
     optional(stock.cornerRadiusMm, value => Number.isFinite(value) && value >= 0 && value <= 100) &&
     optional(stock.layers, layers => Array.isArray(layers) && layers.length >= 1 && layers.length <= 16 &&
-      layers.every(color => typeof color === 'string' && /^#[a-f\d]{6}$/i.test(color)));
+      layers.every(color => typeof color === 'string' && /^#[a-f\d]{6}$/i.test(color))) &&
+    optional(stock.layerThicknessMm, values => Array.isArray(values) && values.length === stock.layers?.length &&
+      values.every(value => Number.isFinite(value) && value >= .01 && value <= 20)) &&
+    optional(stock.thumbnailMode, mode => mode === 'deck' || mode === 'single') &&
+    optional(stock.thumbnailCard, index => Number.isInteger(index) && index >= 1 && index <= cardCount);
+}
+
+// A representative image is always a face already in this book. A legacy
+// thumbnail keeps its original presentation until an editor chooses a mode.
+export function cardThumbnail(book) {
+  const stock = book.cardStock ?? {};
+  const card = stock.thumbnailCard ?? 1;
+  const front = book.pages?.[2 * (card - 1)]?.imageSrc;
+  if (!stock.thumbnailMode && book.thumbnailSrc) return { mode: 'single', card, src: book.thumbnailSrc };
+  const mode = stock.thumbnailMode ?? 'deck';
+  const src = mode === 'single' ? front ?? book.coverImages?.front : book.coverImages?.front ?? front;
+  return { mode, card, src };
 }
 
 export function leafCountForBook(book) {
@@ -106,7 +122,7 @@ export function validLeafLayout(layout, count, trim = [148, 210], pages) {
 
 export function normalizeBookFormat(book) {
   const fields = { bookForm: book.bookForm === 'cards' ? 'cards' : 'bound' };
-  if (validCardStock(book.cardStock)) fields.cardStock = book.cardStock;
+  if (validCardStock(book.cardStock, leafCountForBook(book))) fields.cardStock = book.cardStock;
   if (validLeafLayout(book.leafLayout, leafCountForBook(book), trimSize(book), book.pages)) fields.leafLayout = book.leafLayout;
   return fields;
 }

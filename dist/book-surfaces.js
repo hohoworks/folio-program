@@ -66,12 +66,17 @@ export function bandStops(bands, pageCount, start = 0, end = 1) {
   return bandRunStops(bandRuns(bands, pageCount), pageCount, start, end, 'var(--paper-color, #efede4)');
 }
 
-function plyGradient(layers, count, start, end, angle) {
+function plyGradient(layers, thicknesses, count, start, end, angle) {
   if (!layers?.length || !layers.every(isColor)) return '';
   const period = 1 / (count * (end - start));
   // Slice boundaries represent whole sheets. Each sheet repeats the card's ply sequence.
-  const stops = layers.map((color, index) => color + ' ' + percent(period * index / layers.length) +
-    ' ' + percent(period * (index + 1) / layers.length));
+  const total = thicknesses?.reduce((sum, value) => sum + value, 0) ?? layers.length;
+  let depth = 0;
+  const stops = layers.map((color, index) => {
+    const from = depth;
+    depth += thicknesses?.[index] ?? 1;
+    return color + ' ' + percent(period * from / total) + ' ' + percent(period * depth / total);
+  });
   return 'repeating-linear-gradient(' + angle + ', ' + stops.join(', ') + ')';
 }
 
@@ -107,7 +112,7 @@ function paintFace(face, cut, state, start = 0, end = 1) {
   if (color) {
     paint = 'linear-gradient(' + color + ', ' + color + ')';
   } else {
-    const plies = plyGradient(state.layers, state.leaves, start, end, angle);
+    const plies = plyGradient(state.layers, state.thicknesses, state.leaves, start, end, angle);
     const bands = bandRunStops(state.bands, state.pages, start, end, plies ? 'transparent' : 'var(--paper-color, #efede4)');
     paint = [bands && 'linear-gradient(' + angle + ', ' + bands + ')', plies].filter(Boolean).join(', ');
   }
@@ -469,7 +474,10 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   surface.toggleAttribute('data-wire-bound', hardware);
   const pages = book.pageCount ?? book.pages?.length ?? 0;
   const leaves = Math.max(1, leafCountForBook(book) || Math.ceil(pages / 2));
-  const state = { treatments: book.edgeTreatments, bands: bandRuns(book.edgeBands, pages), pages, leaves, layers: cards && book.cardStock?.layers };
+  const state = {
+    treatments: book.edgeTreatments, bands: bandRuns(book.edgeBands, pages), pages, leaves,
+    layers: cards && book.cardStock?.layers, thicknesses: cards && book.cardStock?.layerThicknessMm,
+  };
   const geometry = book.leafLayout && leafGeometry(book.leafLayout, leaves, size, book.pages);
   const layout = geometry?.leaves.some(leaf => leaf.width !== size[0] || leaf.height !== size[1] || leaf.top !== geometry.coverTop)
     ? geometry : null;
