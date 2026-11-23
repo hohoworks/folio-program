@@ -1,14 +1,13 @@
 import { titleLanguage } from './title-language.js';
-import { setBookMaterial } from './book-material.js';
+import { setBookMaterial, trimSize } from './book-material.js';
 
 const hoverDelay = 105;
 const revealDelay = 420;
 export function createShelf(element, books, { addAssetImage, addCoverArt, select, reducedMotion }) {
   const links = new Map();
-  const heights = books.map(book => book.trimSizeMm?.[1]).filter(h => Number.isFinite(h) && h > 0).sort((a, b) => a - b);
-  // Use a common physical scale without letting one oversized object dwarf the collection.
-  const referenceHeight = heights.length
-    ? Math.min(heights.at(-1), heights[Math.floor((heights.length - 1) / 2)] * 1.6) : 210;
+  let tallestCover = 1;
+  let widestPaint = 1;
+  let tallestPaint = 1;
   let preview;
   let previewStarted = -Infinity;
   let hoverTimer;
@@ -25,11 +24,15 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     if (followPreview && !centerFrame) centerFrame = requestAnimationFrame(alignPreview);
   }
 
+  function fitRibbon() {
+    const ribbon = preview?.querySelector('.book-ribbon');
+    element.style.setProperty('--ribbon-clearance', (ribbon ? ribbon.offsetHeight + 2 : 0) + 'px');
+  }
+
   function alignPreview(now) {
     centerFrame = 0;
     if (!preview || !element.clientWidth || !followPreview) return;
-    const ribbon = preview.querySelector('.book-ribbon');
-    element.style.setProperty('--ribbon-clearance', (ribbon ? ribbon.offsetHeight + 2 : 0) + 'px');
+    fitRibbon();
     const parts = [...preview.querySelectorAll('.shelf-cover, .shelf-hardware, .shelf-leaves')]
       .map(part => part.getBoundingClientRect()).filter(bounds => bounds.width > 0);
     if (!parts.length) return;
@@ -64,6 +67,7 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
       link.classList.add('is-preview');
       preview = link;
       previewStarted = performance.now();
+      fitRibbon();
     }
     centerPreview();
   }
@@ -87,10 +91,11 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     link.href = '#book/' + book.id;
     link.setAttribute('aria-label', book.title);
     link.lang = titleLanguage(book.title);
-    if (book.coverRatio) {
+    const [width, height] = trimSize(book);
+    if (book.trimSizeMm || book.coverRatio) {
       link.setAttribute('data-proportional', '');
-      if (book.trimSizeMm) link.style.setProperty('--shelf-height-ratio', Math.min(1, Math.max(.25, book.trimSizeMm[1] / referenceHeight)));
-      link.style.setProperty('--shelf-book-ratio', book.trimSizeMm ? book.trimSizeMm[0] / book.trimSizeMm[1] : book.coverRatio);
+      link.style.setProperty('--trim-height-mm', height);
+      link.style.setProperty('--shelf-book-ratio', width / height);
     }
     link.toggleAttribute('data-uploaded', !!book.coverImages);
     spine.className = 'shelf-spine';
@@ -106,6 +111,14 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     addCoverArt(cover, book);
     link.append(spine, cover);
     setBookMaterial(link, book, cover);
+    if (link.hasAttribute('data-proportional')) {
+      const profile = link.querySelector('.shelf-wire-spine')?.viewBox.baseVal;
+      const paintRatio = Number(link.style.getPropertyValue('--shelf-paint-ratio')) || width / height;
+      const paintHeight = Number(link.style.getPropertyValue('--shelf-painted-height')) || 1;
+      tallestCover = Math.max(tallestCover, height);
+      widestPaint = Math.max(widestPaint, height * paintRatio, profile?.width || 0);
+      tallestPaint = Math.max(tallestPaint, height * paintHeight, profile?.height || 0);
+    }
 
     link.addEventListener('focus', () => {
       clearTimeout(hoverTimer);
@@ -138,6 +151,11 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     links.set(book.id, link);
   }
 
+  // All measured books share one pixel-per-millimetre scale, including in a narrow gallery.
+  element.style.setProperty('--tallest-cover-mm', tallestCover);
+  element.style.setProperty('--widest-paint-mm', widestPaint);
+  element.style.setProperty('--tallest-paint-mm', tallestPaint);
+  fitRibbon();
   centerPreview();
   // Scrolling and opening books move links under a stationary pointer. Only
   // actual pointer movement should start a different preview.

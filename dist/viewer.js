@@ -870,7 +870,9 @@ function renderShelf() {
       enterBook(book, '#bookshelf', source);
     },
   });
-  const largestTrimSide = Math.max(210, ...books.flatMap(trimSize));
+  const indexSizes = books.map(trimSize);
+  bookIndex.style.setProperty('--tallest-cover-mm', Math.max(1, ...indexSizes.map(size => size[1])));
+  bookIndex.style.setProperty('--widest-cover-mm', Math.max(1, ...indexSizes.map(size => size[0])));
   for (const book of books) {
     const item = document.createElement('li');
     const link = document.createElement('a');
@@ -878,7 +880,7 @@ function renderShelf() {
     link.className = 'index-link';
     link.dataset.book = book.id;
     const [width, height] = trimSize(book);
-    link.style.setProperty('--index-cover-width', width / largestTrimSide);
+    link.style.setProperty('--trim-width-mm', width);
     link.style.setProperty('--index-cover-ratio', width + ' / ' + height);
     link.addEventListener('click', event => {
       if (!plainClick(event)) return;

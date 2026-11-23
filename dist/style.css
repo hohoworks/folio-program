@@ -141,10 +141,11 @@ h1:focus { outline: none; }
   min-width: 0;
   height: var(--library-height);
 }
-.shelf-index { --index-cover-size: clamp(132px, 13vw, 176px); min-width: 0; padding: 18px 12px 24px; border-right: 1px solid var(--accent); overflow: hidden auto; overscroll-behavior-y: contain; }
+.shelf-index { --index-cover-size: clamp(132px, 13vw, 176px); container-type: inline-size; min-width: 0; padding: 18px 12px 24px; border-right: 1px solid var(--accent); overflow: hidden auto; overscroll-behavior-y: contain; }
 .shelf-index ul { margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; list-style: none; }
-.index-link { display: grid; justify-items: center; gap: 7px; text-align: center; text-decoration: none; }
-.index-jacket { display: block; width: min(100%, calc(var(--index-cover-size) * var(--index-cover-width, .738))); aspect-ratio: var(--index-cover-ratio, .738); position: relative; }
+.index-link { display: grid; justify-items: center; align-content: center; min-height: 44px; gap: 7px; text-align: center; text-decoration: none; }
+.index-jacket { display: block; width: calc(var(--index-mm) * var(--trim-width-mm)); aspect-ratio: var(--index-cover-ratio, .738); position: relative; }
+#book-index { --index-mm: min(calc(var(--index-cover-size) / var(--tallest-cover-mm)), calc(100cqw / var(--widest-cover-mm))); }
 .index-title { font-weight: 600; font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
 .book-detail h1, .back-title { word-break: keep-all; overflow-wrap: anywhere; }
 .library-gallery { min-width: 0; overflow: clip; }
@@ -668,6 +669,8 @@ h1:focus { outline: none; }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 .shelf {
+  --shelf-mm: min(calc(var(--shelf-height) * .74 / var(--tallest-cover-mm)), calc(66cqw / var(--widest-paint-mm)), calc(var(--shelf-height) * .84 / var(--tallest-paint-mm)));
+  --open-gutter: 12px;
   --shelf-motion: 460ms cubic-bezier(.33, 0, .26, 1);
   --shelf-face-arrive: 300ms cubic-bezier(.12, .78, .3, 1);
   --shelf-face-leave: 460ms cubic-bezier(.68, 0, .9, .16);
@@ -708,11 +711,9 @@ h1:focus { outline: none; }
 .shelf-book[data-book="city-lines"] { --book-height: calc(var(--shelf-height) * .66); --spine-width: clamp(30px, calc(var(--shelf-height) * .115), 63px); }
 .shelf-book[data-book="tidal-notes"] { --book-height: calc(var(--shelf-height) * .70); --spine-width: clamp(33px, calc(var(--shelf-height) * .12), 66px); }
 .shelf-book[data-proportional] {
-  --book-height: min(calc(var(--shelf-height) * .74 * var(--shelf-height-ratio, 1)),
-    calc(66cqw / var(--shelf-paint-ratio, var(--shelf-book-ratio))),
-    calc(var(--shelf-height) * .84 / var(--shelf-painted-height, 1)));
-  --visible-spine: clamp(3px, calc(var(--face-width) * var(--spine-ratio)), 74px);
-  --spine-width: max(24px, var(--visible-spine));
+  --book-height: calc(var(--shelf-mm) * var(--trim-height-mm));
+  --visible-spine: max(1px, calc(var(--face-width) * var(--spine-ratio)));
+  --spine-width: var(--visible-spine);
   --face-width: calc(var(--book-height) * var(--shelf-book-ratio));
 }
 .shelf-book:focus-visible { z-index: 2; }
@@ -747,7 +748,9 @@ h1:focus { outline: none; }
   transform: scaleX(.045);
   box-shadow: 2px 1px 6px #241b1429;
 }
-.shelf-book.is-preview { width: var(--face-width); z-index: 1; }
+.shelf-book.is-preview { width: var(--face-width); margin-inline: var(--open-gutter); z-index: 1; }
+.shelf-book:not(.is-preview)::before { content: ''; position: absolute; inset: 0 -2px; }
+@media (max-width: 760px) { .shelf { --open-gutter: 8px; } }
 .shelf-book.is-preview .shelf-cover { --face-fade: var(--shelf-face-arrive); opacity: 1; transform: scaleX(1); }
 .shelf-book.is-preview .shelf-spine { --face-fade: var(--shelf-face-leave); opacity: 0; transform: scaleX(.045); }
 
