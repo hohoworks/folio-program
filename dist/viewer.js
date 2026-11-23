@@ -9,7 +9,7 @@ import { addReaderWire } from './book-surfaces.js';
 import { createShelf } from './shelf.js';
 import { titleLanguage, alignDetailTitle } from './title-language.js';
 import { DEFAULT_SITE_TITLE, localizedSiteTitles } from './site-title.js';
-import { projectVideoPlayer } from './project-media.js';
+import { projectFrame } from './project-media.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
@@ -1073,7 +1073,8 @@ function labelProjectPlayer(figure, item, index, title) {
   if (item.type === 'video') {
     figure.querySelector('video').setAttribute('aria-label', label);
   } else {
-    figure.querySelector('iframe').title = label;
+    const frame = figure.querySelector('iframe');
+    if (frame) frame.title = label;
     const link = figure.querySelector('a');
     const action = provider ? (locale === 'en' ? 'Watch on ' + provider : provider + '에서 보기') : t('openWebsite');
     link.textContent = action + ' ↗';
@@ -1092,21 +1093,23 @@ function addProjectPlayer(figure, item, index, title) {
     video.src = assetURL(item.videoSrc);
     figure.append(video);
   } else {
-    const player = projectVideoPlayer(item.url);
-    const frame = document.createElement('iframe');
+    const player = projectFrame(item.url);
     if (player) {
-      figure.dataset.videoProvider = player.provider;
-      frame.sandbox.add('allow-presentation');
-      frame.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+      const frame = document.createElement('iframe');
+      if (player.provider) {
+        figure.dataset.videoProvider = player.provider;
+        frame.sandbox.add('allow-presentation');
+        frame.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+      }
+      frame.sandbox.add('allow-scripts');
+      // Cross-origin apps may load modules and fetch their own resources.
+      if (new URL(player.src).origin !== location.origin) frame.sandbox.add('allow-same-origin');
+      frame.allowFullscreen = true;
+      frame.loading = 'lazy';
+      frame.referrerPolicy = 'strict-origin-when-cross-origin';
+      frame.src = player.src;
+      figure.append(frame);
     }
-    frame.sandbox.add('allow-scripts');
-    // Cross-origin apps may load modules and fetch their own resources.
-    if (new URL(item.url).origin !== location.origin) frame.sandbox.add('allow-same-origin');
-    frame.allowFullscreen = true;
-    frame.loading = 'lazy';
-    frame.referrerPolicy = 'strict-origin-when-cross-origin';
-    frame.src = player?.src || item.url;
-    figure.append(frame);
     const caption = document.createElement('figcaption');
     const link = document.createElement('a');
     link.href = item.url;
