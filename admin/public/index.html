@@ -123,6 +123,10 @@
               <label for="card-pdf-layout">카드 PDF 구성</label><select id="card-pdf-layout"><option value="pairs">앞면·뒷면을 한 쌍씩</option><option value="fronts">모두 앞면으로</option></select>
               <label for="card-pdf">PDF에서 카드 추가</label><input id="card-pdf" type="file" accept="application/pdf,.pdf">
               <p class="help">각 PDF 페이지를 한 면으로 사용합니다. 뒷면 이미지를 비운 카드는 빈 뒷면으로 표시됩니다.</p>
+              <label for="card-thumbnail-mode">목록 썸네일</label>
+              <select id="card-thumbnail-mode"><option value="">기본 표시</option><option value="deck">카드 묶음</option><option value="single">대표 카드 한 장</option></select>
+              <p class="help">기본 표시는 등록된 썸네일을 유지합니다. 썸네일이 없으면 카드 묶음을 보여줍니다.</p>
+              <label id="card-thumbnail-card-row" hidden>대표 카드 번호 <input id="card-thumbnail-card" type="number" min="1" max="500" step="1" value="1" required disabled></label>
               <ol class="image-list card-list" id="card-list"></ol><p id="card-notice" class="help" role="status"></p>
             </fieldset>
             <section class="form-section" aria-labelledby="reader-heading">
@@ -246,8 +250,11 @@
                 <fieldset data-cards hidden disabled class="mockup-group" id="card-stock">
                   <legend>카드 용지</legend>
                   <label for="card-corner">네 모서리 둥글기 (mm)</label><input type="number" id="card-corner" min="0" max="100" step="any" value="0">
-                  <p class="help">합지의 각 층 색을 앞면에서 뒷면 순서로 고르세요.</p>
+                  <label for="card-thickness-mode">합지 두께</label>
+                  <select id="card-thickness-mode"><option value="auto">같은 두께로 자동 배분</option><option value="measured">층별 두께 직접 입력</option></select>
+                  <p class="help">앞면부터 순서대로 각 층의 색을 지정하세요. 묶음 전체 두께를 입력하면 각 층의 두께 비율을 그 값에 맞춥니다.</p>
                   <div id="card-layers"></div><button type="button" class="text-button" id="add-card-layer">합지 층 추가 +</button>
+                  <output class="help" id="card-thickness-summary"></output>
                 </fieldset>
                 </div>
                 <div id="mockup-preview" role="group" aria-label="책 목업 미리보기"></div>
