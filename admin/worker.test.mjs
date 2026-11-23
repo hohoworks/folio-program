@@ -502,6 +502,37 @@ test('work addresses survive old clients and title edits; current and historical
   assert.equal(state.catalog.books[0].slug, 'bap');
 });
 
+test('Korean-only drafts keep their fallback address across edits while distinct saves keep independent IDs', async t => {
+  const state = repository(t, { books: [], projects: [] });
+  const cookie = await session();
+  const draftId = 'acbd1234-1111-4444-8888-123456789abc';
+  const project = { title: '새 작품', draftId, registrationId: crypto.randomUUID(), assets: { images: [imageFile] } };
+  const save = (kind, body) => request('/api/' + kind, { method: 'POST', cookie, body });
+  const created = await save('projects', project);
+  assert.equal(created.status, 201);
+  const { project: saved } = await created.json();
+  assert.equal(saved.slug, 'work-acbd1234');
+  assert.ok(saved.id.endsWith(project.registrationId));
+  const replay = await save('projects', project);
+  assert.equal((await replay.json()).project.id, saved.id);
+  assert.equal(state.catalog.projects.length, 1);
+
+  const book = { title: '새 책', draftId, registrationId: crypto.randomUUID(), coverRatio: 0.7, pageRatio: 0.7,
+    assets: { front: imageFile, pages: [imageFile] } };
+  state.beforeUpdate = () => {
+    state.head = 'concurrent';
+    state.catalog.projects.push({ id: 'other', title: '다른 작품', slug: 'work-acbd1234-2' });
+  };
+  const second = await save('books', book);
+  assert.equal(second.status, 201);
+  const { book: savedBook } = await second.json();
+  assert.equal(savedBook.slug, 'work-acbd1234-3');
+  assert.ok(savedBook.id.endsWith(book.registrationId));
+  const legacyId = 'dada2312-1111-4444-8888-123456789abc';
+  const legacy = await save('projects', { ...project, registrationId: legacyId, draftId: undefined });
+  assert.equal((await legacy.json()).project.slug, 'work-dada2312');
+});
+
 test('concurrent registrations recheck manually claimed addresses and retry automatic suffixes', async t => {
   const state = repository(t, { books: [], projects: [] });
   const cookie = await session();
