@@ -494,7 +494,7 @@ function startTurn(index, corner = .86, opening = false) {
   }
   for (const page of covered) page.style.opacity = '0';
   const turningFace = spreads[(forward ? position : index) - 1]?.right;
-  const physicalLeaf = geometry?.leaves[Math.ceil(turningFace / 2) - 1];
+  const physicalLeaf = geometry?.faces?.[turningFace - 1] ?? geometry?.leaves[Math.ceil(turningFace / 2) - 1];
   const curl = createCurl(front, back, container, { cover, physicalLeaf, geometry });
   turn = { index, forward, opening, preview, covered, curl, corner, progress: 0, offsetY: 0, focus };
   stage.dataset.turning = '';

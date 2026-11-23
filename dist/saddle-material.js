@@ -89,7 +89,8 @@ function curvedFold(fold) {
     const panel=materialPart(fold, 'fold-facet');
     panel.style.left=percent(middle);
     panel.style.width='calc(var(--fold-depth) * '+round(Math.hypot(b-a,slope))+' + .24px)';
-    panel.style.setProperty('--fold-tone', percent(.05 + .26 * Math.abs(middle - .4)));
+    panel.style.setProperty('--fold-tone-left', percent(.025 + .42 * Math.abs(a - .38)));
+    panel.style.setProperty('--fold-tone-right', percent(.025 + .42 * Math.abs(b - .38)));
     panel.style.transform='translateX(-50%) translateZ(calc(var(--fold-depth) * '+round((crownHeight(a)+crownHeight(b))/2)+')) rotateY('+round(-Math.atan2(slope,b-a))+'rad)';
   }
   materialPart(fold,'fold-cap upper');
