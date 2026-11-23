@@ -151,9 +151,10 @@ function shelfLeaves(surface, layout, size) {
   surface.style.removeProperty('--shelf-leaf-width');
   if (!layout) return;
   const outline = pathSVG(surface, 'shelf-leaves', [0, 0, layout.width, layout.height]);
-  outline.style.top = percent(-layout.coverTop / size[1]);
-  outline.style.width = surface.hasAttribute('data-wire-bound') ? 'var(--shelf-wire-leaves)' : mm(layout.width, size[0]);
-  outline.style.height = percent(layout.height / size[1]);
+  const wire = surface.hasAttribute('data-wire-bound');
+  outline.style.top = wire ? 'var(--shelf-wire-leaf-top)' : percent(-layout.coverTop / size[1]);
+  outline.style.width = wire ? 'var(--shelf-wire-leaves)' : mm(layout.width, size[0]);
+  outline.style.height = wire ? 'var(--shelf-wire-leaf-height)' : percent(layout.height / size[1]);
   surface.style.setProperty('--shelf-leaf-width', mm(layout.width, size[0]));
   surface.insertBefore(outline, surface.querySelector('.shelf-cover'));
   for (let i = layout.leaves.length - 1; i >= 0; i--) {
@@ -436,28 +437,40 @@ function wireProfile(surface, geom, width, binding) {
   if (seams.length) stroke(seams.join(''), 'var(--wire-shadow)', wire * .22);
 }
 
-function shelfWire(surface, geom, [width, height], binding, leafWidth, hasCuts) {
+function shelfWire(surface, geom, [width, height], binding, layout, hasCuts) {
   const [minX, minY, maxX, maxY] = geom.rings.flat().reduce((bounds, { xyz: [x,y] }) =>
     [Math.min(bounds[0],x), Math.min(bounds[1],y), Math.max(bounds[2],x), Math.max(bounds[3],y)], [Infinity, Infinity, -Infinity, -Infinity]);
   const pad = geom.wire;
   const bounds = [minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2];
+  const leafWidth = layout?.width ?? width, leafHeight = layout?.height ?? height;
+  const leafTop = -(layout?.coverTop ?? 0);
   const left = Math.min(0, bounds[0]);
   const cutWidth = hasCuts ? Math.min(width * .035, geom.depth * .38) : 0;
   const right = Math.max(width + cutWidth, leafWidth, maxX + pad);
+  const top = Math.min(-cutWidth * .45, leafTop, bounds[1]);
+  const bottom = Math.max(height + cutWidth * .45, leafTop + leafHeight, maxY + pad);
   const slotWidth = right - left;
+  const slotHeight = bottom - top;
   // The entire projected face scales with its animated shelf slot. The wire,
   // the cover and any stepped leaves therefore stay aligned during a turn.
   surface.style.setProperty('--shelf-wire-slot', mm(slotWidth, width));
+  surface.style.setProperty('--shelf-wire-slot-height', mm(slotHeight, width));
   surface.style.setProperty('--shelf-wire-inset', percent(-left / slotWidth));
+  surface.style.setProperty('--shelf-wire-top', percent(-top / slotHeight));
   surface.style.setProperty('--shelf-wire-cover', percent(width / slotWidth));
+  surface.style.setProperty('--shelf-wire-cover-height', percent(height / slotHeight));
   surface.style.setProperty('--shelf-wire-cut', percent(cutWidth / width));
+  surface.style.setProperty('--shelf-wire-cut-height', percent(cutWidth * .45 / height));
   surface.style.setProperty('--shelf-wire-leaves', percent(leafWidth / slotWidth));
+  surface.style.setProperty('--shelf-wire-leaf-top', percent((leafTop - top) / slotHeight));
+  surface.style.setProperty('--shelf-wire-leaf-height', percent(leafHeight / slotHeight));
   surface.style.setProperty('--shelf-paint-ratio', slotWidth / height);
+  surface.style.setProperty('--shelf-painted-height', slotHeight / height);
   const front = pathSVG(surface, 'shelf-hardware', bounds);
   front.style.left = percent((bounds[0] - left) / slotWidth);
-  front.style.top = percent(bounds[1] / height);
+  front.style.top = percent((bounds[1] - top) / slotHeight);
   front.style.width = percent(bounds[2] / slotWidth);
-  front.style.height = percent(bounds[3] / height);
+  front.style.height = percent(bounds[3] / slotHeight);
   for (const { xyz: [cx,cy], face } of geom.holes) {
     if (face === 1) svgElement('circle', { cx, cy, r: geom.wire * 1.05, fill: '#3d3833' }, front);
   }
@@ -510,7 +523,7 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   const leafWidth = layout?.width ?? size[0];
   const hasShelfCuts = !model && !!surface.querySelector('.shelf-cuts');
   const wireKey = hardware ? JSON.stringify([book.bindingType, details.ringPlacement, details.ringCount,
-    details.ringDiameterMm, book.ringPositions, size, depth, leafWidth, hasShelfCuts]) : null;
+    details.ringDiameterMm, book.ringPositions, size, depth, leafWidth, layout?.height, layout?.coverTop, hasShelfCuts]) : null;
   if (hardware) surface.style.setProperty('--wire-color', details.ringColor);
   if (wireKeys.get(surface) !== wireKey) {
     wireViews.get(surface)?.();
@@ -519,7 +532,7 @@ export function setBookSurfaces(surface, book, details, size, depth) {
     if (hardware) {
       const wire = wireGeometry(book.bindingType, details, book.ringPositions, size, depth, 48);
       if (model) modelWire(surface, wire, size, book.bindingType);
-      else shelfWire(surface, wire, size, book.bindingType, leafWidth, hasShelfCuts);
+      else shelfWire(surface, wire, size, book.bindingType, layout, hasShelfCuts);
     }
     wireKeys.set(surface, wireKey);
   }
@@ -533,8 +546,8 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   if (model) {
     surface.style.setProperty('--center-cut-x', mm((size[0] - right - left) / 2, size[0]));
     surface.style.setProperty('--center-cut-y', mm((size[1] - bottom - top) / 2, size[0]));
-  } else {
-    if (!hardware) surface.style.setProperty('--shelf-paint-ratio', leafWidth / size[1]);
+  } else if (!hardware) {
+    surface.style.setProperty('--shelf-paint-ratio', leafWidth / size[1]);
     surface.style.setProperty('--shelf-painted-height', (bottom - top) / size[1]);
     surface.style.setProperty('--shelf-over-top', mm(-top, size[0]));
     surface.style.setProperty('--shelf-over-bottom', mm(bottom - size[1], size[0]));

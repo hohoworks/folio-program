@@ -68,7 +68,7 @@
   overflow: visible;
   pointer-events: none;
 }
-.shelf-hardware { opacity: 0; transition: opacity var(--shelf-motion); }
+.shelf-hardware { opacity: 0; transition: opacity var(--shelf-face-leave); }
 .shelf-book[data-wire-bound] .shelf-spine { display: none; }
 .shelf-book[data-wire-bound]:not(.is-preview) {
   width: max(24px, calc(var(--profile-height) * var(--profile-ratio)));
@@ -77,13 +77,14 @@
 .shelf-wire-spine {
   left: 50%;
   bottom: 0;
-  height: var(--profile-height);
-  width: calc(var(--profile-height) * var(--profile-ratio));
+  height: min(100%, var(--profile-height));
+  width: auto;
+  aspect-ratio: var(--profile-ratio);
   transform: translateX(-50%);
-  transition: opacity var(--shelf-motion);
+  transition: opacity var(--shelf-face-arrive);
 }
-.shelf-book.is-preview .shelf-hardware { opacity: 1; }
-.shelf-book.is-preview .shelf-wire-spine { opacity: 0; }
+.shelf-book.is-preview .shelf-hardware { opacity: 1; transition: opacity var(--shelf-face-arrive); }
+.shelf-book.is-preview .shelf-wire-spine { opacity: 0; transition: opacity var(--shelf-face-leave); }
 .book-model[data-variable-block] { --sheet-depth: calc(var(--depth) - min(1.2px, var(--depth) * .13)); }
 .stage[data-binding="hardcover"] .book-model[data-variable-block] { --sheet-depth: var(--block); }
 .book-model[data-variable-block] > :is(.fore, .head, .tail),
@@ -130,24 +131,29 @@
 .stage[data-uploaded] .book-model[data-card-stock] .back:not(.artwork) { background: var(--paper-color, #fff); }
 .book-model[data-card-stock] .back:not(.artwork) > span { display: none; }
 .shelf-book[data-wire-bound] {
-  overflow-x: clip;
-  overflow-y: visible;
+  overflow: clip;
   overflow-clip-margin: 0;
 }
-.shelf-book[data-wire-bound].is-preview { width: var(--shelf-wire-slot); }
+.shelf-book[data-wire-bound].is-preview {
+  width: var(--shelf-wire-slot);
+  height: var(--shelf-wire-slot-height);
+}
 .shelf-book[data-wire-bound] :is(.shelf-cover, .shelf-cuts) {
   left: var(--shelf-wire-inset);
+  top: var(--shelf-wire-top);
   width: var(--shelf-wire-cover);
+  height: var(--shelf-wire-cover-height);
 }
 .shelf-book[data-wire-bound] .shelf-cover { transform: none; }
 .shelf-book[data-wire-bound] .shelf-fore {
   width: var(--shelf-wire-cut);
   right: calc(0% - var(--shelf-wire-cut));
 }
+.shelf-book[data-wire-bound] :is(.shelf-head, .shelf-tail) { height: var(--shelf-wire-cut-height); }
 .shelf-book[data-wire-bound] .shelf-leaves {
   left: var(--shelf-wire-inset);
 }
-.shelf-book.is-preview:is([data-wire-bound], :has(.shelf-leaves)) {
+.shelf-book.is-preview:not([data-wire-bound]):has(.shelf-leaves) {
   margin-top: var(--shelf-over-top, 0px);
   margin-bottom: var(--shelf-over-bottom, 0px);
 }
