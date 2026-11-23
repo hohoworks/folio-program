@@ -1,3 +1,4 @@
+import { setBookSupport } from './book-photo.js';
 import { bookLeafGeometry, leafCountForBook, trimSize } from './book-format.js';
 import { setExposedSewing, setSaddleSpine } from './saddle-material.js';
 import { resolveMockupDetails } from './mockup-options.js';
@@ -129,6 +130,8 @@ function paintFace(face, cut, state, start = 0, end = 1) {
 function variableLeaves(surface, size, state, layout) {
   surface.querySelector(':scope > .variable-block')?.remove();
   surface.removeAttribute('data-variable-block');
+  const support = [];
+  setBookSupport(surface, 'leaves', support);
   if (!layout) return;
   surface.setAttribute('data-variable-block', '');
   const block = part('variable-block', surface);
@@ -147,6 +150,16 @@ function variableLeaves(surface, size, state, layout) {
       slice.classList.toggle('section-back', after === layout.leaves.length || layout.leaves[after].sectionIndex !== leaf.sectionIndex);
     }
     const start = first / state.leaves, end = after / state.leaves;
+    const top = (leaf.top - layout.coverTop) / size[1] - .5;
+    const bottom = top + leaf.height / size[1];
+    const right = leaf.width / size[0] - .5;
+    if (top < -.5 || bottom > .5 || right > .5) {
+      for (const x of [-.5, right]) {
+        for (const y of [top, bottom]) {
+          for (const z of [.5 - start, .5 - end]) support.push([x, y, z]);
+        }
+      }
+    }
     slice.style.width = percent(leaf.width / size[0]);
     slice.style.height = percent(leaf.height / size[1]);
     slice.style.top = percent((leaf.top - layout.coverTop) / size[1]);
@@ -374,6 +387,13 @@ function modelWire(surface, geom, [width, height], binding) {
   const sheen = stroke(.32, 'var(--wire-sheen)');
   const glint = stroke(.14, 'url(#' + finish + ')');
   const curves = modelWireCurves(geom, binding);
+  // Each turn repeats along one axis, so the two end turns bound the coil
+  // at every viewing angle, including books bound along the bottom edge.
+  const alongEdge = [...geom.rings].sort((a, b) => a[0].local[1] - b[0].local[1]);
+  const ends = new Set([alongEdge[0], alongEdge.at(-1)]);
+  const support = [...ends].flatMap(turn => turn.map(({ xyz: [x, y, z] }) =>
+    [x / width - .5, y / height - .5, z / geom.depth]));
+  setBookSupport(surface, 'wire', support);
   const bounds = [[0, width], [0, height], [-geom.depth / 2, geom.depth / 2]];
   let pending = 0, previous = '';
 
@@ -626,6 +646,7 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   if (wireKeys.get(surface) !== wireKey) {
     wireViews.get(surface)?.();
     wireViews.delete(surface);
+    if (model && !hardware) setBookSupport(surface, 'wire', []);
     for (const node of surface.querySelectorAll(':scope > :is(.model-hardware, .shelf-hardware, .shelf-wire-spine)')) node.remove();
     if (hardware) {
       const wire = wireGeometry(book.bindingType, details, book.ringPositions, size, depth, 48);
