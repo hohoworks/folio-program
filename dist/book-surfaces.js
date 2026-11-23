@@ -206,45 +206,62 @@ const radial = (side, x, y, z, width, height) => {
   }
 };
 
-// A spiral advances a full pitch each revolution. An independent O closes at its own station.
-export function wireGeometry(binding, details, positions, [width, height], depth, steps = 16) {
+// Keep the bore inside even a narrow sheet, with enough ring outside the binding edge.
+function punchInset(diameter, across) {
+  return Math.min(7.5, Math.max(2.5, diameter * .21), diameter * .42, across / 3);
+}
+
+// A single drill guide is used for both covers, every sheet and the actual wire.
+function punchLayout(binding, details, positions, [width, height]) {
   const { ringPlacement: side, ringCount: count, ringDiameterMm: diameter } = details;
-  const length = ['left', 'right'].includes(side) ? height : width;
-  const r = diameter / 2;
-  const wire = Math.min(1.7, Math.max(.65, diameter * .07));
-  const rz = Math.max(r, depth / 2 + wire * 1.55);
+  const vertical = side === 'left' || side === 'right';
+  const length = vertical ? height : width;
+  const across = vertical ? width : height;
   const pitch = length / count;
-  const rings = [];
-  for (let index = 0; index < count; index++) {
-    const center = binding === 'ring' && positions?.length === count ? positions[index] / 100 * length : (index + .5) * pitch;
-    const vertices = [];
-    for (let step = 0; step <= steps; step++) {
-      const t = step / steps, a = t * Math.PI * 2;
-      const x = r * (Math.cos(a) - .18);
-      const y = center + Math.sin(a) * wire * .65 + (binding === 'spiral' ? (t - .5) * pitch : 0);
-      const z = rz * Math.sin(a);
-      vertices.push({ local: [x, y, z], xyz: radial(side, x, y, z, width, height) });
-    }
-    rings.push(vertices);
-  }
-  const holes = [];
-  // The wire crosses each cover on the inside of the binding edge.
-  for (const loop of rings) {
-    for (const face of [1, -1]) {
-      const z = face * depth / 2;
-      for (let step = 1; step < loop.length; step++) {
-        const a = loop[step - 1].local, b = loop[step].local;
-        if ((a[2] > z) === (b[2] > z)) continue;
-        const t = (z - a[2]) / (b[2] - a[2]);
-        const x = a[0] + (b[0] - a[0]) * t;
-        if (x <= 0) continue;
-        const y = a[1] + (b[1] - a[1]) * t;
-        holes.push({ xyz: radial(side, x, y, z, width, height), local: [x,y,z], face });
-        break;
-      }
-    }
-  }
-  return { rings, holes, wire, rz, r, length, side, depth };
+  const wire = Math.min(1.7, Math.max(.65, diameter * .07), pitch * .27, across * .18);
+  const reach = punchInset(diameter, across);
+  const radius = Math.min(wire * (binding === 'ring' ? 1.6 : 1.35), reach * .8, pitch * .36);
+  const custom = binding === 'ring' && positions?.length === count;
+  const stations = Array.from({ length: count }, (_, i) => {
+    const along = custom ? length * positions[i] / 100 : pitch * (i + .5);
+    return Math.max(radius, Math.min(length - radius, along));
+  });
+  const centers = stations.map(along => radial(side, reach, along, 0, width, height).slice(0, 2));
+  return { width, height, side, length, pitch, wire, reach, radius, stations, centers };
+}
+
+export function coverPunchLayout(book) {
+  if (book.bookForm === 'cards' || !['spiral', 'ring'].includes(book.bindingType)) return null;
+  return punchLayout(book.bindingType, resolveMockupDetails(book.mockupDetails), book.ringPositions, trimSize(book));
+}
+
+export function wireGeometry(binding, details, positions, size, depth, steps = 16) {
+  const guide = punchLayout(binding, details, positions, size);
+  const { width, height, side, wire, pitch, reach, stations } = guide;
+  const r = details.ringDiameterMm / 2;
+  const half = depth / 2;
+  const rz = Math.max(r, half + wire * 1.55);
+  const entry = Math.asin(half / rz);
+  const cosEntry = Math.cos(entry);
+  const tip = Math.PI - entry;
+  // Include the exact entrances in the mesh, regardless of the curve resolution.
+  const angles = [...new Set([...Array.from({ length: steps + 1 }, (_, i) => (2 * i / steps - 1) * Math.PI),
+    -tip, -Math.PI / 2, -entry, 0, entry, Math.PI / 2, tip])].sort((a, b) => a - b);
+  const rings = stations.map(station => angles.map(angle => {
+    const a = Math.abs(angle);
+    // Inside the stack the wire follows a straight bore. Its entire advance to
+    // the next hole takes place around the exposed edge, never through solid paper.
+    const outside = Math.max(0, (a - entry) / tip);
+    const x = a <= entry ? reach : reach - 2 * r * (cosEntry - Math.cos(angle)) / (1 + cosEntry);
+    const y = station + (binding === 'spiral' ? Math.sign(angle) * pitch * outside / 2 : 0)
+      + Math.sin(angle) * wire * .65 * outside;
+    const z = a === entry || a === tip ? Math.sign(angle) * half : rz * Math.sin(angle);
+    return { local: [x, y, z], xyz: radial(side, x, y, z, width, height) };
+  }));
+  const holes = stations.flatMap((station, i) => [1, -1].map(face => ({
+    local: [reach, station, face * half], xyz: [...guide.centers[i], face * half], face,
+  })));
+  return { ...guide, rings, holes, rz, r, depth, firstTip: angles.indexOf(-tip), lastTip: angles.indexOf(tip) };
 }
 
 // Intersect a camera ray with the paper block in book coordinates. The wire is
@@ -301,27 +318,15 @@ function visibleWirePath(curves, camera, bounds, project, projectedRuns) {
   return data.join('');
 }
 
-// The two tips of a helix end at the paper surface. An untrimmed turn starts
-// halfway through the stock on the top cut, where a round stroke cap makes
-// an isolated dot visible from above (and at the opposite end from below).
+// Trim the free ends back to cover height on the outside of the edge. Their
+// caps then stay clear of the head and tail without removing a punched station.
 export function modelWireCurves(geometry, binding) {
   if (binding !== 'spiral') return geometry.rings.map(loop => loop.map(point => point.xyz));
-  const points = geometry.rings.flatMap((turn, index) => index ? turn.slice(1) : turn);
-  const halfDepth = geometry.depth / 2;
-  const outside = ({local: [x, , z]}) => x < 0 || Math.abs(z) > halfDepth;
-  const first = points.findIndex(outside);
-  const last = points.findLastIndex(outside);
-  if (first < 1 || last + 1 >= points.length) return [points.map(point => point.xyz)];
-  function surfaceExit(a, b) {
-    const [x, , z] = a.local;
-    const [nextX, , nextZ] = b.local;
-    const atEdge = nextX < 0 ? x / (x - nextX) : 1;
-    const atCover = Math.abs(nextZ) > halfDepth ? (Math.sign(nextZ) * halfDepth - z) / (nextZ - z) : 1;
-    const t = Math.min(atEdge, atCover);
-    return a.xyz.map((v, axis) => v + t * (b.xyz[axis] - v));
-  }
-  return [[surfaceExit(points[first - 1], points[first]), ...points.slice(first, last + 1).map(p => p.xyz),
-    surfaceExit(points[last + 1], points[last])]];
+  return [geometry.rings.flatMap((turn, index) => {
+    const start = index === 0 ? geometry.firstTip : 1;
+    const end = index === geometry.rings.length - 1 ? geometry.lastTip + 1 : turn.length;
+    return turn.slice(start, end).map(point => point.xyz);
+  })];
 }
 
 const wireViews = new WeakMap();
@@ -420,8 +425,8 @@ function modelWire(surface, geom, [width, height], binding) {
       const faceZ = Math.sign(camera[2]) * geom.depth / 2;
       const corners = [[0, 0], [width, 0], [width, height], [0, height]];
       coverOutline.setAttribute('d', 'M' + corners.map(([x, y]) => project([x, y, faceZ])).join('L') + 'Z');
-      lip.setAttribute('d', projectedPunches(geom, camera, project, gauge * 1.04));
-      bore.setAttribute('d', projectedPunches(geom, camera, project, gauge * .87, -gauge * .075));
+      lip.setAttribute('d', projectedPunches(geom, camera, project, geom.radius));
+      bore.setAttribute('d', projectedPunches(geom, camera, project, geom.radius * .85, -geom.radius * .05));
       const runs = [];
       const d = visibleWirePath(curves, camera, bounds, project, runs);
       outline.setAttribute('d', d);
@@ -547,7 +552,7 @@ function wireProfile(surface, geom, width, binding) {
 function shelfWire(surface, geom, [width, height], binding, layout, hasCuts) {
   const [minX, minY, maxX, maxY] = geom.rings.flat().reduce((bounds, { xyz: [x,y] }) =>
     [Math.min(bounds[0],x), Math.min(bounds[1],y), Math.max(bounds[2],x), Math.max(bounds[3],y)], [Infinity, Infinity, -Infinity, -Infinity]);
-  const pad = geom.wire;
+  const pad = Math.max(geom.wire, geom.radius);
   const bounds = [minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2];
   const leafWidth = layout?.width ?? width, leafHeight = layout?.height ?? height;
   const leafTop = -(layout?.coverTop ?? 0);
@@ -579,7 +584,7 @@ function shelfWire(surface, geom, [width, height], binding, layout, hasCuts) {
   front.style.width = percent(bounds[2] / slotWidth);
   front.style.height = percent(bounds[3] / slotHeight);
   for (const { xyz: [cx,cy], face } of geom.holes) {
-    if (face === 1) svgElement('circle', { cx, cy, r: geom.wire * 1.05, fill: '#3d3833' }, front);
+    if (face === 1) svgElement('circle', { cx, cy, r: geom.radius, fill: '#3d3833' }, front);
   }
   const frontPath = [];
   for (const loop of geom.rings) {
@@ -655,8 +660,9 @@ export function setBookSurfaces(surface, book, details, size, depth) {
     }
     wireKeys.set(surface, wireKey);
   }
-  const extra = hardware ? details.ringDiameterMm * .65 + 1 : 0;
   const side = hardware && details.ringPlacement;
+  const across = side === 'top' || side === 'bottom' ? size[1] : size[0];
+  const extra = hardware ? details.ringDiameterMm - punchInset(details.ringDiameterMm, across) + 1.7 : 0;
   const left = side === 'left' ? -extra : 0;
   const right = Math.max(layout?.width ?? 0, size[0] + (side === 'right' ? extra : 0));
   const top = Math.min(-(layout?.coverTop ?? 0), side === 'top' ? -extra : 0);
@@ -676,10 +682,11 @@ export function setBookSurfaces(surface, book, details, size, depth) {
 // Place marks on the real sheets already painted in the spread. At a stepped
 // edge the first sheet under a punch can be an exposed portion of a larger leaf.
 export function addReaderWire(spread, book, pair, layout) {
+  const guide = coverPunchLayout(book);
+  if (!guide) return;
   const kind = book.bindingType;
-  if (book.bookForm === 'cards' || (kind !== 'ring' && kind !== 'spiral')) return;
-  const { ringPlacement: edge, ringCount, ringDiameterMm, ringColor } = resolveMockupDetails(book.mockupDetails);
-  const [trimWidth, trimHeight] = trimSize(book);
+  const { side: edge, width: trimWidth, height: trimHeight, stations, reach, radius, wire: gauge, pitch } = guide;
+  const { ringColor } = resolveMockupDetails(book.mockupDetails);
   const spine = layout?.width ?? trimWidth;
   const height = layout?.height ?? trimHeight;
   const coverTop = layout?.coverTop ?? 0;
@@ -693,12 +700,6 @@ export function addReaderWire(spread, book, pair, layout) {
       }) : [];
   }
   const vertical = edge === 'left' || edge === 'right';
-  const length = vertical ? trimHeight : trimWidth;
-  const pitch = length / ringCount;
-  const gauge = Math.min(1.55, Math.max(.65, ringDiameterMm * .055), pitch * .27);
-  const radius = gauge * 1.12;
-  const reach = Math.min(7.5, Math.max(2.5, ringDiameterMm * .21));
-  const custom = kind === 'ring' && book.ringPositions?.length === ringCount;
   const holes = [], runs = [];
 
   function punch(x, y) {
@@ -711,17 +712,16 @@ export function addReaderWire(spread, book, pair, layout) {
   // the return side of the coil. Only a real sheet gets a punched hole.
   const seam = [];
   const edges = { left: [], right: [] };
-  for (let index = 0; index < ringCount; index++) {
-    const fraction = custom ? book.ringPositions[index] / 100 : (index + .5) / ringCount;
-    const station = Math.max(radius, Math.min(length - radius, fraction * length));
+  for (const station of stations) {
     if (vertical) {
       const y = coverTop + station;
       let punched = false;
       const ends = [];
       for (const [side, sign] of [['left', -1], ['right', 1]]) {
-        const leaf = stacks[side].find(part => y >= part.top + radius && y <= part.top + part.height - radius);
+        const leaf = stacks[side].find(part => reach + radius <= part.width &&
+          y >= part.top + radius && y <= part.top + part.height - radius);
         if (leaf) {
-          ends.push(punch(spine + sign * Math.min(reach, leaf.width / 3), y));
+          ends.push(punch(spine + sign * reach, y));
           punched = true;
         } else {
           ends.push([spine + sign * reach * .65, y]);
@@ -731,13 +731,15 @@ export function addReaderWire(spread, book, pair, layout) {
       continue;
     }
     for (const [side, sign] of [['left', -1], ['right', 1]]) {
-      const leaf = stacks[side].find(part => station >= radius && station <= part.width - radius);
+      const inward = edge === 'top' ? 1 : -1;
+      const boundary = edge === 'top' ? coverTop : coverTop + trimHeight;
+      const y = boundary + inward * reach;
+      const leaf = stacks[side].find(part => station >= radius && station <= part.width - radius &&
+        y >= part.top + radius && y <= part.top + part.height - radius);
       if (!leaf) continue;
       const x = spine + sign * station;
-      const inward = edge === 'top' ? 1 : -1;
-      const boundary = edge === 'top' ? leaf.top : leaf.top + leaf.height;
       const outer = [x, boundary + inward * gauge / 2];
-      const inner = punch(x, boundary + inward * Math.min(reach, leaf.height / 3));
+      const inner = punch(x, y);
       edges[side].push([outer, inner]);
     }
   }
