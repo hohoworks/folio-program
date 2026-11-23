@@ -1470,7 +1470,11 @@ async function initialize() {
   state.cards ??= state.item?.bookForm === 'cards' ? cardsFromPages(state.item.pages) : [];
   state.galleryImages ||= [];
   state.galleryDirty ||= false;
-  state.metadata = { ...bookPreferences(state.item), ...state.metadata };
+  const storedPreferences = bookPreferences(state.item);
+  state.metadata = { ...storedPreferences, ...state.metadata };
+  if (storedPreferences.construction) {
+    state.metadata.construction = { ...storedPreferences.construction, ...state.metadata.construction };
+  }
   state.metadata['first-page-side'] ??= state.item?.firstPageSide ?? '';
   state.metadata['join-split'] ??= !state.files.interior && state.item?.joinSplitPages === true;
   const english = state.item?.translations?.en || {};
