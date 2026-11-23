@@ -1,5 +1,5 @@
 import { bookLeafGeometry, leafCountForBook, trimSize } from './book-format.js';
-import { setSaddleSpine } from './saddle-material.js';
+import { setExposedSewing, setSaddleSpine } from './saddle-material.js';
 import { resolveMockupDetails } from './mockup-options.js';
 
 const cuts = ['fore', 'head', 'tail'];
@@ -253,12 +253,20 @@ function behindBook(point, camera, bounds) {
   return true;
 }
 
-function visibleWirePath(curves, camera, bounds, project) {
+function visibleWirePath(curves, camera, bounds, project, projectedRuns) {
   const data = [];
+  function emit(command, point) {
+    const xy = project(point);
+    data.push(command + xy);
+    if (projectedRuns) {
+      if (command === 'M') projectedRuns.push([]);
+      projectedRuns.at(-1).push(xy);
+    }
+  }
   for (const curve of curves) {
     let a = curve[0];
     let hidden = behindBook(a, camera, bounds);
-    if (!hidden) data.push('M' + project(a));
+    if (!hidden) emit('M', a);
     for (let i = 1; i < curve.length; i++) {
       const b = curve[i];
       const nextHidden = behindBook(b, camera, bounds);
@@ -270,9 +278,9 @@ function visibleWirePath(curves, camera, bounds, project) {
           if (behindBook(middle, camera, bounds) === hidden) lo = middle;
           else hi = middle;
         }
-        data.push((hidden ? 'M' : 'L') + project(hi));
+        emit(hidden ? 'M' : 'L', hi);
       }
-      if (!nextHidden) data.push('L' + project(b));
+      if (!nextHidden) emit('L', b);
       a = b;
       hidden = nextHidden;
     }
@@ -304,32 +312,67 @@ export function modelWireCurves(geometry, binding) {
 }
 
 const wireViews = new WeakMap();
-function modelWire(surface, geom, [width, height], binding) {
-  const mesh = part('model-hardware', surface);
-  mesh.style.setProperty('--wire-gauge', 'max(.85px, ' + mm(geom.wire, width) + ')');
-  for (const { xyz: [x, y], face } of geom.holes) {
-    const hole = part('wire-hole', mesh);
-    hole.style.left = percent(x / width);
-    hole.style.top = percent(y / height);
-    hole.style.transform = 'translate(-50%, -50%) translateZ(calc(var(--depth) * ' + face / 2 + ' + ' + face * .06 + 'px))' +
-      (face < 0 ? ' rotateY(180deg)' : '');
-  }
+let wireFinishId = 0;
 
+// The light-facing strip follows the projected tangent around each bend.
+function wireReflection(runs, gauge) {
+  const data = [];
+  for (const run of runs) {
+    if (run.length < 2) continue;
+    for (let i = 0; i < run.length; i++) {
+      const a = run[Math.max(0, i - 1)], b = run[Math.min(run.length - 1, i + 1)];
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const length = Math.hypot(dx, dy) || 1;
+      const nx = -dy / length, ny = dx / length;
+      const offset = (-.45 * nx - .89 * ny) * gauge * .26;
+      data.push((i ? 'L' : 'M') + round(run[i][0] + offset * nx) + ',' + round(run[i][1] + offset * ny));
+    }
+  }
+  return data.join('');
+}
+
+// Project the punches in exactly the same coordinate system as the wire.
+// From the side, the thickness of the paper hides the openings on both covers.
+const punchCircle = Array.from({ length: 16 }, (_, i) => [Math.cos(i * Math.PI / 8), Math.sin(i * Math.PI / 8)]);
+function projectedPunches(geom, camera, project, radius, inset = 0) {
+  const data = [];
+  for (const { xyz: [x, y, z], face } of geom.holes) {
+    if ((camera[2] - z) * face <= 0) continue;
+    for (let i = 0; i < punchCircle.length; i++) {
+      const [dx, dy] = punchCircle[i];
+      const xy = project([x + radius * dx, y + inset + radius * dy, z]);
+      data.push((i ? 'L' : 'M') + xy);
+    }
+    data.push('Z');
+  }
+  return data.join('');
+}
+
+function modelWire(surface, geom, [width, height], binding) {
   // Render a whole curve in screen space. Its stroke keeps a round gauge even
   // when the ring is edge-on. The projection uses the same moving CSS camera as the book.
   const frame = surface.parentElement;
   const ink = pathSVG(frame, 'model-wire-ink', [0, 0, width, height]);
-  const paths = [];
-  for (const [scale, color, offset] of [
-    [1.06, 'var(--wire-shadow)', 0], [.73, 'var(--wire-color)', 0],
-    [.23, 'var(--wire-light)', -.20],
-  ]) {
-    paths.push(svgElement('path', {
-      fill: 'none', stroke: color, 'stroke-width': geom.wire * scale,
-      'stroke-linecap': 'round', 'stroke-linejoin': 'round',
-      transform: 'translate(0 ' + round(offset * geom.wire) + ')',
-    }, ink));
+  const gauge = geom.wire * (binding === 'ring' ? 1.24 : 1);
+  const finish = 'wire-finish-' + ++wireFinishId;
+  const defs = svgElement('defs', {}, ink);
+  const gradient = svgElement('linearGradient', { id: finish, x1: '0%', y1: '10%', x2: '100%', y2: '25%' }, defs);
+  for (const [offset, color] of [[0, 'var(--wire-glint)'], [.27, 'var(--wire-sheen)'], [.58, 'var(--wire-glint)'], [1, 'var(--wire-sheen)']]) {
+    svgElement('stop', { offset, 'stop-color': color }, gradient);
   }
+  const coverClip = svgElement('clipPath', { id: finish + '-cover', clipPathUnits: 'userSpaceOnUse' }, defs);
+  const coverOutline = svgElement('path', {}, coverClip);
+  const punches = svgElement('g', { 'clip-path': 'url(#' + finish + '-cover)' }, ink);
+  const lip = svgElement('path', { class: 'wire-hole-rim', fill: 'var(--wire-punch-rim)' }, punches);
+  const bore = svgElement('path', { class: 'wire-hole', fill: 'var(--wire-punch-depth)' }, punches);
+  function stroke(scale, color) {
+    return svgElement('path', { fill: 'none', stroke: color, 'stroke-width': gauge * scale,
+      'stroke-linecap': 'butt', 'stroke-linejoin': 'round' }, ink);
+  }
+  const outline = stroke(1.08, 'var(--wire-contour)');
+  const body = stroke(.81, 'var(--wire-color)');
+  const sheen = stroke(.32, 'var(--wire-sheen)');
+  const glint = stroke(.14, 'url(#' + finish + ')');
   const curves = modelWireCurves(geom, binding);
   const bounds = [[0, width], [0, height], [-geom.depth / 2, geom.depth / 2]];
   let pending = 0, previous = '';
@@ -352,10 +395,20 @@ function modelWire(surface, geom, [width, height], binding) {
       const project = ([x, y, z]) => {
         const p = matrix.transformPoint({ x: (x - width / 2) * scaleX, y: (y - height / 2) * scaleY, z: z * scaleZ });
         const factor = perspective / (perspective - p.z);
-        return (width / 2 + p.x * factor / scaleX).toFixed(3) + ' ' + (height / 2 + p.y * factor / scaleY).toFixed(3);
+        return [round(width / 2 + p.x * factor / scaleX), round(height / 2 + p.y * factor / scaleY)];
       };
-      const d = visibleWirePath(curves, camera, bounds, project);
-      for (const path of paths) path.setAttribute('d', d);
+      const faceZ = Math.sign(camera[2]) * geom.depth / 2;
+      const corners = [[0, 0], [width, 0], [width, height], [0, height]];
+      coverOutline.setAttribute('d', 'M' + corners.map(([x, y]) => project([x, y, faceZ])).join('L') + 'Z');
+      lip.setAttribute('d', projectedPunches(geom, camera, project, gauge * 1.04));
+      bore.setAttribute('d', projectedPunches(geom, camera, project, gauge * .87, -gauge * .075));
+      const runs = [];
+      const d = visibleWirePath(curves, camera, bounds, project, runs);
+      outline.setAttribute('d', d);
+      body.setAttribute('d', d);
+      const reflection = wireReflection(runs, gauge);
+      sheen.setAttribute('d', reflection);
+      glint.setAttribute('d', reflection);
     }
     if (surface.getAnimations().some(animation => animation.playState === 'running')) schedule();
   }
@@ -547,6 +600,7 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   const layout = hasSections || geometry?.leaves.some(leaf => leaf.width !== size[0] || leaf.height !== size[1] || leaf.top !== geometry.coverTop)
     ? geometry : null;
   setSaddleSpine(surface, book, details, size, depth, geometry);
+  setExposedSewing(surface, book, details, size, depth);
   if (model) {
     for (const cut of cuts) paintFace(surface.querySelector(':scope > .' + cut), cut, state);
     paintFace(surface.querySelector(':scope > .spine'), 'spine', { ...state, bands: null });

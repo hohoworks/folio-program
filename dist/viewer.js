@@ -1,5 +1,6 @@
 import { loadCatalog, readerSpreads, trimSize } from './catalog.js';
 import { setBookMaterial, mockupViews } from './book-material.js';
+import { lightBook } from './book-photo.js';
 import { createCurl, createCardTurn } from './curl.js';
 import { bookLeafGeometry, cardFaces, cardThumbnail, physicalSpreads } from './book-format.js';
 import { createMobileReader } from './mobile-reader.js';
@@ -15,7 +16,7 @@ const stage = $('stage');
 const orbit = $('orbit');
 const model = $('book-model');
 const modelFrame = $('model-frame');
-const modelShadow = stage.querySelector('.model-shadow');
+const updateStudioLight = lightBook(model, stage.querySelector('.model-shadow'));
 const container = $('current-page');
 const pageArea = $('page-area');
 const previousButton = $('prev');
@@ -613,46 +614,11 @@ readButton.addEventListener('click', () => step(1));
 previousButton.addEventListener('click', () => step(-1));
 nextButton.addEventListener('click', () => step(1));
 
-// Place the contact shadow under the lowest projected corner as the book turns.
-function positionBookShadow() {
-  const width = model.offsetWidth;
-  const height = model.offsetHeight;
-  if (!width || !height) return;
-  const depth = Math.max(1.5, Math.min(80, width * (Number(model.style.getPropertyValue('--spine-ratio')) || .025)));
-  const matrix = new DOMMatrix().rotateAxisAngle(1, 0, 0, rotation.x)
-    .rotateAxisAngle(0, 1, 0, rotation.y).rotateAxisAngle(0, 0, 1, -5);
-  const corners = [];
-  for (const x of [-width / 2, width / 2]) {
-    for (const y of [-height / 2, height / 2]) {
-      for (const z of [-depth / 2, depth / 2]) {
-        const point = matrix.transformPoint({ x, y, z });
-        const perspective = 1300 / (1300 - point.z);
-        corners.push({ x: point.x * perspective, y: point.y * perspective });
-      }
-    }
-  }
-  corners.sort((a, b) => b.y - a.y);
-  const lowest = corners[0];
-  const touching = corners.filter(point => lowest.y - point.y < 1.5);
-  const contactX = touching.reduce((sum, point) => sum + point.x, 0) / touching.length;
-  const screenX = corners.map(point => point.x);
-  modelShadow.style.setProperty('--contact-x', contactX + 'px');
-  modelShadow.style.setProperty('--contact-y', lowest.y + 'px');
-  modelShadow.style.setProperty('--footprint', (Math.max(...screenX) - Math.min(...screenX)) + 'px');
-}
-
-new ResizeObserver(positionBookShadow).observe(model);
-
 function setRotation(x, y) {
   rotation = { x: Math.min(77, Math.max(-77, x)), y };
   model.style.setProperty('--rx', `${rotation.x}deg`);
   model.style.setProperty('--ry', `${rotation.y}deg`);
-  const pitch = rotation.x * Math.PI / 180;
-  const yaw = rotation.y * Math.PI / 180;
-  const light = .6 * Math.cos(yaw) * Math.cos(pitch) - .5 * Math.sin(yaw);
-  model.style.setProperty('--front-shade', Math.max(0, (.55 - light) * .12));
-  model.style.setProperty('--back-shade', Math.max(0, (.55 + light) * .12));
-  positionBookShadow();
+  updateStudioLight();
 }
 
 orbit.addEventListener('pointerdown', (event) => {
