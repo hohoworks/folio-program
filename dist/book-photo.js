@@ -5,10 +5,16 @@ export function setBookSupport(model, part, points) {
   supports.set(model, { ...supports.get(model), [part]: points });
 }
 
+// The front cover sits at half the actual CSS depth, including any display limits.
+export function renderedBookDepth(front) {
+  return 2 * new DOMMatrixReadOnly(getComputedStyle(front).transform).m43;
+}
+
 // A large overhead light stays fixed while the object turns. Read the displayed
 // transform so keyboard transitions and the administrator preview use the same pose.
 export function lightBook(model, shadow) {
   const frame = model.parentElement;
+  const cover = model.querySelector(':scope > .front');
   let queued = 0;
   let lastView = '';
   let lastSupport;
@@ -19,7 +25,7 @@ export function lightBook(model, shadow) {
     const height = model.offsetHeight;
     if (!width || !height) return;
     const transform = getComputedStyle(model).transform;
-    const depth = Math.max(1.5, Math.min(80, width * (Number(model.style.getPropertyValue('--spine-ratio')) || .025)));
+    const depth = renderedBookDepth(cover);
     const frameStyle = getComputedStyle(frame);
     const perspective = parseFloat(frameStyle.perspective) || 1300;
     const fit = parseFloat(frameStyle.scale) || 1;
