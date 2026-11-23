@@ -1,15 +1,16 @@
 import { loadCatalog, readerSpreads, trimSize } from './catalog.js';
-import { setBookMaterial, mockupViews } from './book-material.js';
+import { setBookMaterial, mockupViews, spineRatio } from './book-material.js';
 import { lightBook } from './book-photo.js';
 import { createCurl, createCardTurn } from './curl.js';
 import { bookLeafGeometry, cardFaces, cardThumbnail, physicalSpreads } from './book-format.js';
 import { createMobileReader } from './mobile-reader.js';
 import { addReaderSaddle } from './saddle-material.js';
-import { addReaderWire, coverPunchLayout } from './book-surfaces.js';
+import { addReaderWire, addWorkWire, coverPunchLayout } from './book-surfaces.js';
 import { createShelf } from './shelf.js';
 import { titleLanguage, alignDetailTitle } from './title-language.js';
 import { DEFAULT_SITE_TITLE, localizedSiteTitles } from './site-title.js';
 import { projectFrame } from './project-media.js';
+import { resolveWorkRoute, workPath } from './work-url.js';
 
 const $ = (id) => document.getElementById(id);
 const stage = $('stage');
@@ -790,6 +791,11 @@ function addFlatCoverPunches(cover, book) {
   cover.append(svg);
 }
 
+function addWorkCoverHardware(parent, book) {
+  if (book.bookForm === 'cards' || !['spiral', 'ring'].includes(book.bindingType)) return;
+  return addWorkWire(parent, book, spineRatio(book) * trimSize(book)[0]);
+}
+
 function stopCoverArrival() {
   coverArrival?.cancel();
   coverArrival = undefined;
@@ -823,19 +829,13 @@ const siteTitles = unavailable ? {
 } : localizedSiteTitles(site);
 const projectMenu = $('project-menu');
 const projectCards = new Map();
-if (new URL(location.href).searchParams.has('sort')) {
-  const url = new URL(location.href);
-  url.searchParams.delete('sort');
-  history.replaceState(history.state, '', url);
-}
 const compareYears = new Intl.Collator('en', { numeric: true }).compare;
 const archiveYears = [...new Set(entries.map(entry => entry.year).filter(Boolean))]
   .sort((a, b) => compareYears(b, a));
-if (locale === 'en' && !new URL(location.href).searchParams.has('lang')) {
-  const url = new URL(location.href);
-  url.searchParams.set('lang', locale);
-  history.replaceState(history.state, '', url);
-}
+const initialURL = new URL(location.href);
+initialURL.searchParams.delete('sort');
+setURLLanguage(initialURL);
+if (initialURL.href !== location.href) history.replaceState(history.state, '', initialURL);
 let bookLinks;
 const indexLinks = new Map();
 const shelfPicked = $('shelf-picked');
@@ -846,25 +846,35 @@ function identifyShelfPreview(id) {
   indexLinks.get(shelfPicked.dataset.book)?.removeAttribute('aria-current');
   indexLinks.get(id)?.setAttribute('aria-current', 'true');
   shelfPicked.dataset.book = id;
-  shelfPicked.href = '#book/' + id;
+  shelfPicked.href = entryURL(books[index]);
   shelfPicked.textContent = itemCopy(books[index]).title;
   $('shelf-prev').disabled = index === 0;
   $('shelf-next').disabled = index === books.length - 1;
 }
 
+shelfPicked.addEventListener('click', event => {
+  const book = books.find(book => book.id === shelfPicked.dataset.book);
+  if (!book || !plainClick(event)) return;
+  event.preventDefault();
+  enterBook(book, sectionURL('bookshelf'));
+});
+
 function setShelfLabels(book, title) {
   const indexLink = indexLinks.get(book.id);
   indexLink.setAttribute('aria-label', title);
   indexLink.title = title;
+  indexLink.href = entryURL(book);
   indexLink.lang = titleLanguage(title);
   indexLink.querySelector('.index-title').textContent = title;
   const shelfLink = bookLinks.links.get(book.id);
   shelfLink.setAttribute('aria-label', title);
   shelfLink.lang = titleLanguage(title);
+  shelfLink.href = entryURL(book);
   shelfLink.querySelector('.shelf-spine').lang = titleLanguage(book.title);
   if (shelfPicked.dataset.book === book.id) {
     indexLink.setAttribute('aria-current', 'true');
     shelfPicked.textContent = title;
+    shelfPicked.href = entryURL(book);
   }
 }
 
@@ -873,10 +883,11 @@ function renderShelf() {
   bookLinks = createShelf(shelf, books, {
     addAssetImage,
     addCoverArt: addShelfThumbnail,
+    entryURL,
     reducedMotion,
     onPreview: identifyShelfPreview,
     select(book, source) {
-      enterBook(book, '#bookshelf', source);
+      enterBook(book, sectionURL('bookshelf'), source);
     },
   });
   $('shelf-picker').hidden = books.length < 2;
@@ -888,7 +899,7 @@ function renderShelf() {
   for (const book of books) {
     const item = document.createElement('li');
     const link = document.createElement('a');
-    link.href = '#book/' + book.id;
+    link.href = entryURL(book);
     link.className = 'index-link';
     link.dataset.book = book.id;
     const [width, height] = trimSize(book);
@@ -930,14 +941,13 @@ function archiveState(url = new URL(location.href)) {
 }
 
 function archiveURL(changes = {}, origin = location.href) {
-  const url = new URL(origin, location.href);
-  const state = { ...archiveState(url), ...changes };
+  const state = { ...archiveState(new URL(origin, location.href)), ...changes };
+  const url = new URL('/', location.origin);
   for (const key of ['tag', 'year']) {
     if (state[key]) url.searchParams.set(key, state[key]);
     else url.searchParams.delete(key);
   }
-  url.searchParams.delete('sort');
-  url.searchParams.set('lang', locale);
+  setURLLanguage(url);
   url.hash = '#project';
   return url;
 }
@@ -946,44 +956,50 @@ function relativeURL(url) {
   return url.pathname + url.search + url.hash;
 }
 
-function entryURL(entry) {
-  const url = archiveURL();
-  url.hash = (entry.type === 'book' ? '#book/' : '#project/') + entry.id;
+function setURLLanguage(url) {
+  if (locale === 'en') url.searchParams.set('lang', 'en');
+  else url.searchParams.delete('lang');
+}
+
+function sectionURL(section) {
+  const url = new URL('/', location.origin);
+  setURLLanguage(url);
+  url.hash = section;
   return relativeURL(url);
 }
 
-function archiveReturn(value) {
+function entryURL(entry) {
+  const url = new URL(workPath(entry.slug), location.origin);
+  setURLLanguage(url);
+  return relativeURL(url);
+}
+
+function savedArchiveURL() {
+  const saved = history.state?.folioReturn;
+  if (!saved) return null;
   try {
-    const url = new URL(value || '#project', location.href);
-    if (url.origin === location.origin && url.pathname === location.pathname && url.hash === '#project') {
+    const url = new URL(saved, location.origin + '/');
+    if (url.origin === location.origin && ['/', '/index.html'].includes(url.pathname) && url.hash === '#project') {
       return relativeURL(archiveURL({}, url));
     }
   } catch {
-    // A direct detail link returns to the current archive selection.
+    // Ignore invalid return addresses in old history entries.
   }
-  return relativeURL(archiveURL());
+  return null;
 }
 
 function updateReturnLinks() {
   projectMenu.href = relativeURL(archiveURL({ tag: '', year: '' }));
   wordmark.href = projectMenu.href;
-  $('project-back').href = archiveReturn(history.state?.folioReturn);
+  const archive = savedArchiveURL();
+  $('project-back').href = archive || relativeURL(archiveURL());
   $('project-back').textContent = t('backProject');
-  let returnTo = '#bookshelf';
-  try {
-    const url = new URL(history.state?.folioReturn || '#bookshelf', location.href);
-    if (url.origin === location.origin && url.pathname === location.pathname && url.hash === '#project') {
-      returnTo = archiveReturn(history.state.folioReturn);
-    }
-  } catch {
-    // Directly opened books return to the shelf.
-  }
-  libraryBack.href = returnTo;
-  libraryBack.textContent = returnTo === '#bookshelf' ? t('backShelf') : t('backProject');
+  libraryBack.href = archive || sectionURL('bookshelf');
+  libraryBack.textContent = t(archive ? 'backProject' : 'backShelf');
 }
 
 function changeArchive(changes) {
-  const stayInArchive = routeFromHash().page === 'project';
+  const stayInArchive = currentRoute().page === 'project';
   history.pushState({}, '', archiveURL(changes));
   showRoute(!stayInArchive);
 }
@@ -1064,7 +1080,7 @@ for (const value of ['', ...archiveYears]) {
 $('project-year').disabled = !archiveYears.length;
 $('project-year').addEventListener('change', event => changeArchive({ year: event.target.value }));
 
-for (const link of [$('project-back'), libraryBack]) {
+for (const link of [$('project-back'), libraryBack, ...document.querySelectorAll('.site-menu a:not(#project-menu)')]) {
   link.addEventListener('click', event => {
     if (!plainClick(event)) return;
     event.preventDefault();
@@ -1084,7 +1100,7 @@ projectMenu.addEventListener('click', showAllProjects);
 wordmark.addEventListener('click', showAllProjects);
 
 function enterBook(book, returnTo, source) {
-  history.pushState({ folioReturn: returnTo }, '', '#book/' + book.id);
+  history.pushState({ folioReturn: returnTo }, '', entryURL(book));
   showRoute(true);
   if (!reducedMotion.matches) animateCoverArrival(source);
 }
@@ -1167,7 +1183,7 @@ function portfolioRow(entry) {
       const image = addAssetImage(figure, item.imageSrc, { lazy: index > 0, alt: item.alt });
       if (entry.type === 'book' && entry.coverImages && index === 0) {
         image.setAttribute('data-cover-alt', '');
-        addFlatCoverPunches(figure, entry);
+        addWorkCoverHardware(figure, entry);
       }
     }
     pictures.append(figure);
@@ -1183,11 +1199,11 @@ function portfolioRow(entry) {
   appendText(copy, 'div', 'editorial-description', content.description.join('\n\n')).lang = titleLanguage(content.description.join(' '));
   if (entry.type === 'book') {
     const read = appendText(copy, 'a', 'read-book project-read', t('read') + ' →');
-    read.href = '#book/' + entry.id;
+    read.href = entryURL(entry);
     read.addEventListener('click', event => {
       if (!plainClick(event)) return;
       event.preventDefault();
-      enterBook(entry, '#project/' + entry.id);
+      enterBook(entry, relativeURL(archiveURL()));
     });
   }
   return row;
@@ -1231,7 +1247,21 @@ function createProjectCard(entry, index) {
   } else {
     link.dataset.textPreview = '';
   }
-  if (isBook) addFlatCoverPunches(picture, entry);
+  if (isBook && entry.coverImages?.front) {
+    // A separately uploaded thumbnail can be a photograph of an already bound book.
+    const cover = picture.querySelector('img');
+    const applyWire = () => {
+      const view = addWorkCoverHardware(picture, entry);
+      if (!view) return;
+      const [, , w, h] = view.bounds;
+      link.style.setProperty('--project-ratio', w / h);
+      link.style.setProperty('--preview-width-factor', w / 220);
+    };
+    if (!entry.thumbnailSrc || assetURL(entry.thumbnailSrc) === assetURL(entry.coverImages.front)) applyWire();
+    else if (cover) cover.addEventListener('load', () => {
+      if (cover.src === assetURL(entry.coverImages.front)) applyWire();
+    }, { once: true });
+  }
   const overlay = appendText(picture, 'span', 'project-card-hover', '');
   overlay.setAttribute('aria-hidden', 'true');
   appendText(overlay, 'span', 'project-card-title', content.title);
@@ -1240,7 +1270,8 @@ function createProjectCard(entry, index) {
     link.addEventListener('click', event => {
       if (!plainClick(event)) return;
       event.preventDefault();
-      const box = picture.getBoundingClientRect();
+      const sheet = picture.classList.contains('work-wire-cover') && picture.querySelector('img');
+      const box = (sheet || picture).getBoundingClientRect();
       const ratio = entry.coverRatio ?? .738;
       const width = Math.min(box.width, box.height * ratio);
       const height = width / ratio;
@@ -1319,10 +1350,19 @@ $('contact-empty').hidden = !contactLayout.hidden || hasContactLinks;
 $('contact-details').hidden = !hasContactLinks && !contactLayout.hidden;
 
 function updateDocumentTitle() {
-  const route = routeFromHash();
+  const route = currentRoute();
   const labels = { project: '', about: t('about'), bookshelf: t('bookshelf'), contact: t('contact') };
   const title = route.entry ? itemCopy(route.entry).title : labels[route.page];
   document.title = title ? title + ' · ' + siteTitles[locale] : siteTitles[locale];
+  let canonical = document.querySelector('link[rel="canonical"]');
+  if (route.entry) {
+    if (!canonical) {
+      canonical = document.createElement('link');
+      canonical.rel = 'canonical';
+      document.head.append(canonical);
+    }
+    canonical.setAttribute('href', workPath(route.entry.slug));
+  } else if (!unavailable) canonical?.remove();
 }
 
 function updateProjectText(entry) {
@@ -1377,6 +1417,7 @@ function refreshLocale() {
   wordmark.setAttribute('aria-label', siteTitles[locale] + ' ' + t('home'));
   document.querySelector('.site-menu').setAttribute('aria-label', t('menu'));
   for (const link of document.querySelectorAll('.site-menu a')) {
+    link.href = sectionURL(link.hash.slice(1));
     link.textContent = t(link.hash.slice(1));
     link.lang = locale;
   }
@@ -1421,7 +1462,7 @@ function refreshLocale() {
     }
     if (onShelf) setShelfLabels(entry, content.title);
   }
-  const route = routeFromHash();
+  const route = currentRoute();
   if (activeRoute && route.page === 'project') renderProjectIndex();
   if (route.page === 'detail') updateProjectText(route.entry);
   if (activeBook) updateBookText(activeBook);
@@ -1439,7 +1480,7 @@ function chooseLocale(next, { updateURL = true, save = true } = {}) {
   }
   if (updateURL) {
     const url = new URL(location.href);
-    url.searchParams.set('lang', locale);
+    setURLLanguage(url);
     history.replaceState(history.state, '', url);
   }
   refreshLocale();
@@ -1447,17 +1488,8 @@ function chooseLocale(next, { updateURL = true, save = true } = {}) {
 
 $('language-toggle').addEventListener('click', () => chooseLocale(locale === 'ko' ? 'en' : 'ko'));
 
-function routeFromHash() {
-  const hash = location.hash.slice(1);
-  if (['about', 'project', 'bookshelf', 'contact'].includes(hash)) return { page: hash };
-  const [prefix, id, extra] = hash.split('/');
-  const entry = entries.find(item => item.id === (id ?? hash));
-  if (!extra && entry) {
-    if (prefix === 'project') return { page: entry.type === 'book' ? 'book' : 'detail', entry, legacyProjectBook: entry.type === 'book' };
-    if (prefix === 'book' && entry.type === 'book') return { page: 'book', entry };
-    if (!id) return { page: entry.type === 'book' ? 'book' : 'detail', entry };
-  }
-  return { page: 'project' };
+function currentRoute() {
+  return resolveWorkRoute(entries, location);
 }
 
 function showBook(book, moveFocus) {
@@ -1516,11 +1548,13 @@ function showBook(book, moveFocus) {
 }
 
 function showRoute(moveFocus) {
-  const route = routeFromHash();
-  if (route.legacyProjectBook) {
-    const url = new URL(location.href);
-    url.hash = '#book/' + route.entry.id;
-    history.replaceState({ ...history.state, folioReturn: relativeURL(archiveURL()) }, '', url);
+  const route = currentRoute();
+  if (route.entry && entryURL(route.entry) !== relativeURL(new URL(location.href))) {
+    // Old shared item links sometimes carry their originating archive filters.
+    const { tag, year } = archiveState();
+    const saved = (route.fromProject || tag || year) && !history.state?.folioReturn
+      ? { ...history.state, folioReturn: relativeURL(archiveURL()) } : history.state;
+    history.replaceState(saved, '', entryURL(route.entry));
   }
   const key = route.page + ':' + (route.entry?.id ?? '') + (route.page === 'project' ? ':' + JSON.stringify(archiveState()) : '');
   if (key === activeRoute) return;
@@ -1561,8 +1595,8 @@ function showRoute(moveFocus) {
 refreshLocale();
 showRoute(false);
 function locationChanged() {
-  const requested = new URL(location.href).searchParams.get('lang');
-  if ((requested === 'en' || requested === 'ko') && requested !== locale) chooseLocale(requested, { updateURL: false, save: false });
+  const requested = new URL(location.href).searchParams.get('lang') === 'en' ? 'en' : 'ko';
+  if (requested !== locale) chooseLocale(requested, { updateURL: false, save: false });
   showRoute(true);
 }
 window.addEventListener('hashchange', locationChanged);

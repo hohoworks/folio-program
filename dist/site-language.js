@@ -1,15 +1,15 @@
 // Resolve the language before the browser paints the published site name.
 (() => {
   let locale = new URL(location.href).searchParams.get('lang');
-  if (locale !== 'en' && locale !== 'ko') {
+  if (locale !== 'en' && locale !== 'ko' && !location.pathname.startsWith('/work/')) {
     try { locale = localStorage.getItem('folio-language'); } catch { /* Storage is optional. */ }
   }
   document.documentElement.lang = locale === 'en' ? 'en' : 'ko';
   if (locale !== 'en') return;
   const title = document.querySelector('title');
-  const primaryName = title.textContent;
-  const englishName = title.dataset.en;
-  document.title = englishName || 'Portfolio';
+  const primaryName = title.dataset.siteKo || title.textContent;
+  const englishName = title.dataset.siteEn || title.dataset.en;
+  document.title = title.dataset.en || 'Portfolio';
   if (!englishName || englishName === primaryName) return;
 
   // The head runs before the link is parsed. Select its language before its first paint.
