@@ -183,6 +183,7 @@ test('an explicit empty demo includes all sample assets; a failed build preserve
   await readFile(join(f.output, 'library.js'));
   await readFile(join(f.output, 'assets/forest-cover.webp'));
   await readFile(join(f.output, 'assets/examples/thumbs/afterimage.webp'));
+  await readFile(join(f.output, 'work/afterimage.html'));
   const missing = 'assets/projects/new/missing.jpg';
   const project = { id: 'new', title: '새 작업', images: [{ imageSrc: missing }] };
   await f.save({ books: [], projects: [project] });
@@ -193,6 +194,35 @@ test('an explicit empty demo includes all sample assets; a failed build preserve
   assert.equal((await f.read()).projects[0].id, 'new');
   await f.save({ books: [], projects: [{ ...project, published: 'false' }] });
   await assert.rejects(buildPublic(f.root), /공개 설정/);
+});
+
+test('direct work pages contain localized titles, canonical clean URLs, and public aliases only', async t => {
+  const f = await fixture(t);
+  const project = { id: 'shown', title: '종이 & 책', slug: 'new-name', slugAliases: ['former-name', 'first-name'],
+    translations: { en: { title: 'Paper <archive>' } }, media: [{ type: 'embed', url: 'https://example.com/project' }] };
+  const hidden = { ...project, id: 'hidden', title: 'Draft', slug: 'private-name', slugAliases: ['private-previous'], published: false };
+  const legacy = { ...project, id: 'old', slug: undefined, slugAliases: undefined, translations: { en: { title: 'Private name' } } };
+  await f.save({ books: [], projects: [project, hidden, legacy], site: { title: 'Studio' } });
+  await buildPublic(f.root);
+  const output = path => readFile(join(f.output, path), 'utf8');
+  const canonical = await output('work/new-name.html');
+  assert.match(canonical, /rel="canonical" href="\/work\/new-name"/);
+  assert.match(canonical, /<title data-en="Paper &lt;archive&gt; · Studio"[^>]*>종이 &amp; 책 · Studio<\/title>/);
+  assert.match(canonical, /src="\/viewer\.js\?v=[a-f0-9]{16}"/);
+  assert.match(canonical, /content="frame-src https:\/\/example.com"/);
+  assert.equal(await output('work/former-name.html'), canonical);
+  assert.equal(await output('_redirects'), '/work/former-name /work/new-name 302\n/work/first-name /work/new-name 302\n');
+  assert.ok((await output('work/private-name-2.html')).includes('/work/private-name-2'));
+  assert.deepEqual((await readdir(join(f.output, 'work'))).sort(), ['first-name.html', 'former-name.html', 'new-name.html', 'private-name-2.html']);
+  const published = await f.read();
+  assert.deepEqual(published.projects[0].slugAliases, ['former-name', 'first-name']);
+  assert.ok(!(await output('404.html')).includes('rel="canonical"'));
+  project.published = false;
+  await f.save({ books: [], projects: [project, hidden, legacy] });
+  await buildPublic(f.root);
+  await assert.rejects(output('work/new-name.html'), { code: 'ENOENT' });
+  await assert.rejects(output('work/former-name.html'), { code: 'ENOENT' });
+  await assert.rejects(output('_redirects'), { code: 'ENOENT' });
 });
 
 test('the shipped site title migrates before publishing, while subsequent choices and translations survive', async t => {
@@ -227,7 +257,7 @@ test('HTML and the full module graph use one version that changes with code, ind
     await buildPublic(f.root);
     const readOutput = name => readFile(join(f.output, name), 'utf8');
     const home = await readOutput('index.html');
-    const version = home.match(/\.\/viewer\.js\?v=([a-f0-9]{16})"/)?.[1];
+    const version = home.match(/"\/viewer\.js\?v=([a-f0-9]{16})"/)?.[1];
     assert.ok(version, 'the entry module must have a version');
     const scripts = (await readdir(f.output)).filter(name => name.endsWith('.js'));
     const localCodeUrls = source => [...source.matchAll(/(["'])(\.?\/[^"'<>\s]*?\.(?:js|css)(?:\?[^"'<>\s]*)?)\1/g)].map(match => match[2]);
@@ -237,7 +267,7 @@ test('HTML and the full module graph use one version that changes with code, ind
       assert.deepEqual(localCodeUrls(generated), localCodeUrls(original).map(url => url + '?v=' + version), name);
     }
     assert.ok(home.includes('"https://use.typekit.net/gwz2aiq.js"'));
-    assert.ok(home.includes('"./assets/folio.svg"'));
+    assert.ok(home.includes('"/assets/folio.svg"'));
     assert.ok((await readOutput('catalog.js')).includes("'./catalog.json'"));
     assert.ok((await readOutput('library.js')).includes("'./assets/forest.jpg'"));
     assert.ok((await readOutput('book.js')).includes("'./assets/books/sample/guide.pdf'"));
