@@ -132,6 +132,5 @@
 }
 .shelf-book.is-preview:is([data-wire-bound], :has(.shelf-leaves)) {
   margin-top: var(--shelf-over-top, 0px);
-  margin-bottom: max(var(--shelf-over-bottom, 0px), var(--shelf-ribbon-drop, 0px));
+  margin-bottom: var(--shelf-over-bottom, 0px);
 }
-.shelf-book[data-ribbon] { --shelf-ribbon-drop: var(--ribbon-length); }

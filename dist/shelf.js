@@ -16,6 +16,8 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     cancelAnimationFrame(centerFrame);
     centerFrame = requestAnimationFrame(() => {
       if (!preview || !element.clientWidth) return;
+      const ribbon = preview.querySelector('.book-ribbon');
+      element.style.setProperty('--ribbon-clearance', (ribbon ? ribbon.offsetHeight + 2 : 0) + 'px');
       const parts = [...preview.querySelectorAll('.shelf-cover, .shelf-hardware, .shelf-leaves')]
         .map(part => part.getBoundingClientRect()).filter(bounds => bounds.width > 0);
       if (!parts.length) return;
