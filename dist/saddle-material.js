@@ -35,66 +35,153 @@ function stitchFractions(details) {
 function stroke(svg, path, gauge, color, metallic) {
   if (!path) return;
   const line = { d: path, fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' };
-  vector(svg, 'path', { ...line, stroke: 'color-mix(in srgb, ' + color + ' 70%, #231e1b)', 'stroke-width': gauge * 1.4 });
-  vector(svg, 'path', { ...line, stroke: 'color-mix(in srgb, ' + color + (metallic ? ' 68%, white)' : ' 85%, white)'), 'stroke-width': gauge * .72 });
+  vector(svg, 'path', { ...line, transform:'translate('+round(gauge*.42)+' '+round(gauge*.56)+')',
+    stroke:'#36281d', opacity:'.23', 'stroke-width':gauge*1.65 });
+  vector(svg, 'path', { ...line, stroke:'color-mix(in srgb, '+color+' 68%, #28211a)', 'stroke-width':gauge*1.13 });
+  vector(svg, 'path', { ...line, stroke:color, 'stroke-width':gauge*.81 });
+  vector(svg, 'path', { ...line, transform:'translate('+round(-gauge*.19)+' '+round(-gauge*.13)+')',
+    stroke:'color-mix(in srgb, '+color+(metallic?' 35%, white)':' 60%, #fcf2d3)'),
+    'stroke-width':gauge*(metallic?.24:.19), ...(metallic ? {} : {'stroke-dasharray':round(gauge*.72)+' '+round(gauge*.9)}) });
 }
 
-function stitches(svg, details, x, top, height, foldWidth, inside = false) {
+function punctures(svg, holes, gauge, compact = false) {
+  let openings='';
+  for(const [x,y] of holes){
+    const rx=round(gauge*.73), ry=round(gauge*1.04);
+    openings+='M'+round(x-rx)+' '+round(y)+'a'+rx+' '+ry+' 0 1 0 '+round(2*rx)+' 0a'+rx+' '+ry+' 0 1 0 '+round(-2*rx)+' 0Z';
+  }
+  vector(svg,'path',{d:openings,fill:'#f3e6c9',opacity:'.6',transform:'translate(0 '+round(gauge*.4)+')'});
+  if (compact) vector(svg, 'path', { d: openings, fill: '#584b3b' });
+  else for (const [cx, cy] of holes) vector(svg, 'ellipse', { cx, cy, rx: gauge*.73, ry: gauge*1.04, fill: '#584b3b' });
+}
+
+function stitches(svg, details, x, top, height, foldWidth, inside = false, standingEyes = false) {
   const stations = stitchFractions(details);
   const thread = details.stitchType === 'thread';
-  const gauge = thread ? .48 : details.stapleThicknessMm;
-  const half = Math.min(5.8, height * .046, height * .37 / stations.length);
-  const punches = [];
+  const gauge = thread ? .4 : details.stapleThicknessMm;
+  const spacing = stations.length > 1 ? height*(stations[1]-stations[0]) : height;
+  const half = Math.min(5.8, height * .046, spacing*.4);
+  const holes = [];
   let line = '';
-  function hole(px, py) { punches.push([round(px), round(py)]); }
   if (thread) {
-    const low = Math.min(...stations) * height;
-    const high = Math.max(...stations) * height;
-    const start = stations.length > 1 ? low : height * .12;
-    const end = stations.length > 1 ? high : height * .88;
-    const spans = Math.min(180, Math.max(2, Math.round((end - start) / 5)));
-    for (let i = 0; i <= spans; i++) {
-      const y = top + start + i * (end - start) / spans;
-      const px = x + (i % 2 ? -.12 : .12);
-      hole(px, y);
-      if (i === spans || i % 2 !== (inside ? 1 : 0)) continue;
-      const next = y + (end - start) / spans;
-      line += 'M'+px+' '+y+'Q'+(x + .45)+' '+((y+next)/2)+' '+(2*x-px)+' '+next;
+    // Both sides of a lockstitch run between successive needle holes.
+    const margin = Math.min(height*.13, 7);
+    const span = height - 2*margin;
+    const steps = Math.max(2, Math.min(240, Math.round(span/3.75)));
+    for(let i=0;i<=steps;i++){
+      const y=top+margin+span*i/steps;
+      const px= x+(i%2 ? -.065 : .065)*(inside ? -1 : 1);
+      holes.push([px,y]);
+      if(i===0){line='M'+px+' '+y;continue;}
+      line+='Q'+round(x+(inside ? -.2 : .21))+' '+round(y-span/steps*.5)+' '+round(px)+' '+round(y);
     }
   } else {
     for (const fraction of stations) {
       const y = top + fraction * height, a = y - half, b = y + half;
-      hole(x, a); hole(x, b);
+      holes.push([x,a],[x,b]);
       if (inside) {
         line += 'M'+(x-.16)+' '+a+'Q'+(x-.55)+' '+(a+1)+' '+(x-.25)+' '+(y-.66);
         line += 'M'+(x+.16)+' '+b+'Q'+(x+.55)+' '+(b-1)+' '+(x+.25)+' '+(y+.66);
       } else if (details.stitchType === 'loop') {
-        const bulge = foldWidth * .37;
-        line += 'M'+x+' '+a+'L'+x+' '+(a+half*.4)+'C'+(x+bulge)+' '+(a+half*.4)+' '+(x+bulge)+' '+(b-half*.4)+' '+x+' '+(b-half*.4)+'L'+x+' '+b;
+        if(standingEyes){
+          line+='M'+x+' '+a+'L'+x+' '+(y-half*.76)+'M'+x+' '+(y+half*.76)+'L'+x+' '+b;
+        } else {
+          const bulge=foldWidth*.23;
+          line+='M'+x+' '+a+'L'+x+' '+(y-half*.76)+'C'+(x+bulge)+' '+(y-half*.76)+' '+(x+bulge)+' '+(y+half*.76)+' '+x+' '+(y+half*.76)+'L'+x+' '+b;
+        }
       } else {
-        line += 'M'+x+' '+a+'Q'+(x+.13)+' '+y+' '+x+' '+b;
+        line+='M'+x+' '+a+'Q'+(x+.16)+' '+(a+.33)+' '+(x+.16)+' '+(a+.72)+'L'+(x+.16)+' '+(b-.72)+'Q'+(x+.16)+' '+(b-.33)+' '+x+' '+b;
       }
     }
   }
-  for (const [cx,cy] of punches) vector(svg,'ellipse',{cx,cy,rx:gauge*.92,ry:gauge*1.15,fill:'#3c3028'});
+  punctures(svg, holes, gauge);
   stroke(svg, line, gauge, thread ? (details.threadColor || '#b38e62') : details.stapleColor, !thread);
+  return half;
 }
 
 const crownHeight = t => .27 * Math.sin(Math.PI * t);
-function curvedFold(fold) {
-  const facets = 8;
+function curvedFold(fold, width, facets = 8) {
   for (let i = 0; i < facets; i++) {
     const a=i/facets, b=(i+1)/facets, middle=(a+b)/2;
     const slope=crownHeight(b)-crownHeight(a);
     const panel=materialPart(fold, 'fold-facet');
     panel.style.left=percent(middle);
-    panel.style.width='calc(var(--fold-depth) * '+round(Math.hypot(b-a,slope))+' + .24px)';
+    panel.style.width='calc(var(--fold-depth) * '+round(Math.hypot(b-a,slope))+' + .46px)';
     panel.style.setProperty('--fold-tone-left', percent(.025 + .42 * Math.abs(a - .38)));
     panel.style.setProperty('--fold-tone-right', percent(.025 + .42 * Math.abs(b - .38)));
     panel.style.transform='translateX(-50%) translateZ(calc(var(--fold-depth) * '+round((crownHeight(a)+crownHeight(b))/2)+')) rotateY('+round(-Math.atan2(slope,b-a))+'rad)';
   }
-  materialPart(fold,'fold-cap upper');
-  materialPart(fold,'fold-cap lower');
+  // At the head and tail, each nested sheet doubles back on itself.
+  // The narrower gatherings only resolve a few of those paper edges.
+  const lineCount=Math.max(2,Math.min(18,Math.round(width/.5)));
+  let profile='';
+  for(let i=1;i<=lineCount;i++){
+    const r=48*i/lineCount, x=round(50-r), reach=round(r*2);
+    profile+='M'+x+' 0C'+x+' '+round(reach*.55)+' '+round(50-r*.54)+' '+reach+' 50 '+reach;
+    profile+='S'+round(50+r)+' '+round(reach*.55)+' '+round(50+r)+' 0';
+  }
+  for(const position of ['upper','lower']){
+    const cap=materialPart(fold,'fold-cap '+position);
+    const paper=diagram(cap,'gathering-end',100,100);
+    vector(paper,'path',{d:profile,fill:'none',stroke:'#665a44',opacity:'.48','stroke-width':.85});
+  }
+}
+
+// Piercing positions follow the middle of each folded gathering. Successive
+// loops return through those stations and interlock on the exposed paper.
+export function setExposedSewing(surface, book, details, size, depth) {
+  const spine=surface.querySelector('.spine, .shelf-spine');
+  spine.querySelector('.exposed-sewing')?.remove();
+  const exposed=book.bookForm!=='cards' && book.bindingType==='exposed-sewn' && !book.coverImages?.spine;
+  surface.toggleAttribute('data-sewn-gatherings',exposed);
+  if(!exposed)return;
+
+  const model=surface.classList.contains('book-model');
+  const group=materialPart(spine,'exposed-sewing');
+  group.setAttribute('aria-hidden','true');
+  const count=Math.max(1,Math.min(32,Math.round(depth/2.25)));
+  const weights=Array.from({length:count},(_,i)=>1+.042*Math.sin((i+1)*2.36));
+  const total=weights.reduce((sum,weight)=>sum+weight,0);
+  const centers=[];
+  let edge=0;
+  weights.forEach(weight=>{
+    const share=weight/total;
+    const fold=materialPart(group,'sewn-gathering');
+    fold.style.width=percent(share);
+    fold.style.left=percent(edge);
+    fold.style.setProperty('--fold-share',round(share));
+    if(model)curvedFold(fold,depth*share,4);
+    centers.push(depth*(edge+share/2));
+    edge+=share;
+  });
+  const h=size[1], pitch=depth/count, gauge=Math.min(.53,pitch*.32,h*.008);
+  const reach=Math.min(1.05,pitch*.44,h/(details.sewingStationCount+1)*.13);
+  const ink=diagram(group,'signature-thread',depth,h);
+  ink.style.setProperty('--thread-lift',round(.27/count));
+  const color=details.threadColor || '#b0a080';
+  for(let j=0;j<details.sewingStationCount;j++){
+    const station=vector(ink,'g',{class:'sewing-station'});
+    const y=h*(j+.5)/details.sewingStationCount;
+    const holes=centers.map((x,i)=>[x,y+reach*.13*Math.sin(i*1.7+j*2.2)]);
+    punctures(station,holes,gauge*1.08,true);
+    const direction=j%2 ? 1 : -1;
+    let thread='M0 '+round(y-direction*reach*.42);
+    let previous=0,py=y-direction*reach*.42;
+    for(const [x,cy] of holes){
+      const span=x-previous, crest=direction*reach;
+      // Pick up the preceding loop, then pull the strand into the next hole.
+      thread+='C'+round(previous+span*.23)+' '+round(py+crest*.16)+' '+round(x-span*.3)+' '+round(cy+crest)+' '+round(x)+' '+round(cy);
+      previous=x;py=cy;
+    }
+    thread+='Q'+round((previous+depth)/2)+' '+round(py-direction*reach*.36)+' '+round(depth)+' '+round(y+direction*reach*.35);
+    stroke(station,thread,gauge,color,false);
+    let links='';
+    for(let i=0;i+1<holes.length;i++){
+      const [x,cy]=holes[i], span=holes[i+1][0]-x;
+      links+='M'+round(x)+' '+round(cy)+'Q'+round(x+span*.16)+' '+round(cy-direction*reach*.56)+' '+round(x+span*.52)+' '+round(cy+direction*reach*.42);
+    }
+    stroke(station,links,gauge*.83,color,false);
+  }
 }
 
 export function setSaddleSpine(surface, book, details, size, depth, layout) {
@@ -126,17 +213,18 @@ export function setSaddleSpine(surface, book, details, size, depth, layout) {
     fold.style.top=percent(model ? (section.top-coverTop)/size[1] : section.top/hullHeight);
     fold.style.setProperty('--fold-share',share);
     if (section.color) fold.style.setProperty('--fold-color',section.color);
-    if (model) curvedFold(fold);
     const width=Math.max(.2,depth*share);
+    if (model) curvedFold(fold,width);
     const ink=diagram(fold,'fold-fasteners',width,section.height);
-    stitches(ink,details,width/2,0,section.height,width);
+    const half=stitches(ink,details,width/2,0,section.height,width,false,model);
     if (model && details.stitchType==='loop') {
       // Each eye bends away from the spine, on its own standing wire plane.
       for (const fraction of stitchFractions(details)) {
         const eye=diagram(fold,'saddle-eye',6.5,12);
         eye.style.top=percent(fraction);
         eye.style.setProperty('--eye-mm','calc(var(--material-width) / '+size[0]+')');
-        stroke(eye,'M0.3 1.4C2.2 1.4 5.9 1.9 5.9 6S2.2 10.6 0.3 10.6',details.stapleThicknessMm,details.stapleColor,true);
+        eye.style.height='calc(var(--eye-mm) * '+round(half*2)+')';
+        stroke(eye,'M0 1.44C2.45 1.44 5.8 2.45 5.8 6S2.45 10.56 0 10.56',details.stapleThicknessMm,details.stapleColor,true);
       }
     }
   }

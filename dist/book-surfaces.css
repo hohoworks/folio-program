@@ -18,6 +18,13 @@
 .book-model[data-cover-stock] :is(.front-rim.upper, .back-rim.lower) { --strip-color: linear-gradient(to top, var(--cover-plies)); }
 .book-model[data-cover-stock] :is(.front-rim.lower, .back-rim.upper) { --strip-color: linear-gradient(to bottom, var(--cover-plies)); }
 .book-model [data-cut="laminated"] { background: var(--cut-paint); }
+.book-model[data-card-stock] [data-cut="laminated"] {
+  background: linear-gradient(146deg, #fff2, transparent 35% 72%, #28201514), var(--cut-paint);
+}
+.book-model[data-card-stock] :is(.spine, .fore)[data-cut="laminated"] {
+  background: linear-gradient(90deg, #493b2612, transparent 6% 94%, #fff3),
+    linear-gradient(to bottom, #ffffff0d, transparent 54%, #312b2218), var(--cut-paint);
+}
 .edge-scan {
   position: absolute;
   inset: 0;
@@ -48,7 +55,8 @@
   border-radius: var(--corner-radius, 0px);
 }
 .book-model[data-card-stock][data-rounded-corners] :is(.head, .tail) { left: calc(var(--corner-radius) - var(--seam-lap)); }
-.book-model[data-card-stock][data-rounded-corners] .spine { inset-block: calc(var(--corner-radius) - var(--seam-lap)); }
+.book-model[data-card-stock][data-rounded-corners] .spine { inset-block: calc(var(--corner-radius) - 2.5 * var(--seam-lap)); }
+.book-model[data-card-stock] .corner-strip.edge-paper { --strip-height: calc(var(--depth) + var(--seam-lap)); }
 .corner-strip.left-corner { left: calc(var(--corner-radius) * var(--x-inset) + var(--strip-inset)); right: auto; }
 .corner-strip.left-corner.upper { transform: translate(-50%, -50%) translateZ(var(--strip-z)) rotateZ(var(--edge-angle)) rotateX(90deg); }
 .corner-strip.left-corner.lower { transform: translate(-50%, 50%) translateZ(var(--strip-z)) rotateZ(var(--edge-angle)) rotateX(-90deg); }
@@ -62,7 +70,7 @@
   clip-path: inset(calc(-1 * var(--cut-width)) calc(-1 * var(--cut-width)) calc(-1 * var(--cut-width)) 0 round var(--corner-radius));
 }
 .stage .model-frame { scale: var(--physical-fit, 1); }
-.model-hardware, .variable-block, .leaf-slice {
+.variable-block, .leaf-slice {
   position: absolute;
   inset: 0;
   transform-style: preserve-3d;
@@ -74,6 +82,11 @@
 }
 .model-frame:has(> .model-wire-ink) { transform-style: flat; }
 .model-wire-ink {
+  --wire-contour: color-mix(in srgb, var(--wire-color) 52%, #161a1b);
+  --wire-sheen: color-mix(in srgb, var(--wire-color) 62%, #faf9ef);
+  --wire-glint: color-mix(in srgb, var(--wire-color) 28%, #fffdf5);
+  --wire-punch-rim: #b5a791;
+  --wire-punch-depth: #39332d;
   position: absolute;
   inset: 0;
   z-index: 1;
@@ -124,14 +137,6 @@
 .slice-head, .slice-tail { --paper-angle: 0deg; height: calc(var(--slab-depth) + .08px); inset-inline: 0; }
 .slice-head { top: calc(var(--slab-depth) / -2); transform: rotateX(90deg); }
 .slice-tail { bottom: calc(var(--slab-depth) / -2); transform: rotateX(-90deg); }
-.wire-hole {
-  position: absolute;
-  width: calc(var(--wire-gauge) * 2.4);
-  height: calc(var(--wire-gauge) * 2);
-  border-radius: 50%;
-  background: radial-gradient(ellipse at 48% 40%, #2a2724 30%, #514b42 65%, #bfb7a6 80%, transparent);
-  backface-visibility: hidden;
-}
 .book-model:is([data-variable-block], [data-wire-bound]) {
   transform: rotateX(var(--rx)) rotateY(var(--ry)) rotateZ(-5deg) translate(var(--center-cut-x), var(--center-cut-y));
 }
@@ -215,8 +220,15 @@
   transform-origin: center top;
   transform: rotateX(90deg);
   clip-path: ellipse(50% 100% at 50% 0%);
-  background: repeating-radial-gradient(ellipse at 50% -260%, var(--paper-color, #eee9d9) 0 .9px, #958c79 1px 1.17px);
+  background: linear-gradient(to bottom, #fff1, #75644729), var(--paper-color, #eee9d9);
 }
+.gathering-end { position: absolute; inset: 0; width: 100%; height: 100%; }
+.book-model[data-saddle-folds] :is(.front, .back)::after {
+  --fold-edge: to right;
+  background-image: linear-gradient(var(--fold-edge), #49382035, #fff1 1.2%, #fff0 3.8%),
+    linear-gradient(118deg, #ffffff0b, transparent 45% 84%, #41352b0a);
+}
+.book-model[data-saddle-folds] .back::after { --fold-edge: to left; }
 .fold-cap.upper { top: 0; }
 .fold-cap.lower { top: 100%; }
 .fold-fasteners {
@@ -229,6 +241,34 @@
   transform: translateZ(calc(var(--fold-depth) * .275 + .07px));
 }
 .shelf-spine .fold-fasteners { overflow: hidden; transform: none; }
+.book-model[data-sewn-gatherings] .spine, .shelf-book[data-sewn-gatherings] .shelf-spine {
+  --binding-depth: var(--depth, var(--visible-spine, var(--spine-width)));
+  background: var(--paper-color, #e5dfcd);
+}
+.book-model[data-sewn-gatherings] .spine { overflow: visible; transform-style: preserve-3d; }
+[data-sewn-gatherings] :is(.spine, .shelf-spine)::before,
+[data-colored-sewing] :is(.spine, .shelf-spine).artwork::before { content: none; }
+.exposed-sewing, .sewn-gathering, .signature-thread {
+  position: absolute; inset: 0; pointer-events: none;
+}
+.exposed-sewing, .sewn-gathering { transform-style: preserve-3d; }
+.sewn-gathering {
+  --fold-depth: calc(var(--binding-depth) * var(--fold-share));
+  --fold-color: var(--paper-color, #efe9d9);
+  right: auto;
+}
+.sewn-gathering .fold-facet {
+  background: linear-gradient(90deg, rgb(74 59 42 / var(--fold-tone-left)), rgb(74 59 42 / var(--fold-tone-right))),
+    linear-gradient(168deg, #fff2, transparent 33% 72%, #5347350e), var(--fold-color);
+}
+.shelf-spine .sewn-gathering {
+  background: linear-gradient(90deg, #4a3f3145, #796a5226 13%, #fff2 43%, #fff0 66%, #63554036), var(--fold-color);
+}
+.signature-thread {
+  width: 100%; height: 100%;
+  transform: translateZ(calc(var(--binding-depth) * var(--thread-lift) + .07px));
+}
+.shelf-spine .signature-thread { transform: none; }
 .saddle-eye {
   position: absolute;
   left: 50%;

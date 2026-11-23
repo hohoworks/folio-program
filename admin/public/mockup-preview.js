@@ -1,5 +1,7 @@
 import { mockupViews, setBookMaterial, trimSize } from './vendor/mockup/book-material.js';
 
+import { lightBook } from './vendor/mockup/book-photo.js';
+
 export function createMockupPreview(host) {
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `
@@ -7,6 +9,7 @@ export function createMockupPreview(host) {
     <link rel="stylesheet" href="/vendor/mockup/book-surfaces.css">
     <link rel="stylesheet" href="/mockup-preview.css">
     <div class="stage" data-uploaded data-proportional>
+      <div class="model-shadow" aria-hidden="true"></div>
       <div class="model-frame"><div class="book-model" data-book="preview">
         <div class="face front cover-art"></div>
         <div class="face back"></div><div class="face spine"></div>
@@ -23,6 +26,7 @@ export function createMockupPreview(host) {
     </div>`;
   const stage = root.querySelector('.stage');
   const model = root.querySelector('.book-model');
+  const updateStudioLight = lightBook(model, root.querySelector('.model-shadow'));
   const front = model.querySelector('.front');
   const sources = new Map();
   const scanSources = new Map();
@@ -36,6 +40,7 @@ export function createMockupPreview(host) {
     const angle = inspectionViews[name] || mockupViews[currentBook?.mockupView] || mockupViews.spine;
     model.style.setProperty('--rx', angle.x + 'deg');
     model.style.setProperty('--ry', angle.y + 'deg');
+    updateStudioLight();
     for (const button of angleButtons) button.setAttribute('aria-pressed', String(button.dataset.angle === name));
   }
   for (const button of angleButtons) button.addEventListener('click', () => setView(button.dataset.angle));

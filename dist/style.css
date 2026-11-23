@@ -385,10 +385,10 @@ h1:focus { outline: none; }
   transform: translate(-50%, -34%) rotate(-3deg);
 }
 .model-shadow::after {
-  width: clamp(12px, calc(var(--footprint, 180px) * .45), 90px);
+  width: var(--contact-span, 42px);
   height: clamp(3px, calc(var(--model-width) * .023), 9px);
   background: radial-gradient(ellipse, #2c28205c, #3c362d23 42%, transparent 73%);
-  filter: blur(1px);
+  filter: blur(1.2px);
   transform: translate(-50%, -36%);
 }
 .stage[data-arriving] .model-shadow { animation: cover-shadow 920ms ease both; }
@@ -441,9 +441,13 @@ h1:focus { outline: none; }
 .head, .tail { --paper-angle: 0deg; }
 .head { box-shadow: inset 0 1px 1px #695d3f38; }
 .tail { box-shadow: inset 0 0 5px #594a3840; }
+/* Paper at the foot receives bounced light. The top and fore edge turn toward the light independently. */
+.book-model :is(.head, .slice-head) { filter: brightness(var(--head-light, 1)); }
+.book-model :is(.fore:not(:has(> .fore-arc)), .fore-arc-panel, .slice-fore) { filter: brightness(var(--fore-light, 1)); }
+.book-model :is(.tail, .slice-tail) { filter: brightness(var(--tail-light, 1)); }
 .case-board { display: none; }
 .stage[data-binding="hardcover"] .case-board,
-.book-model[data-cover-stock] .case-board {
+.book-model:is([data-soft-cover], [data-cover-stock]) .case-board {
   display: block;
   position: absolute;
   inset: 0;
@@ -473,17 +477,17 @@ h1:focus { outline: none; }
 .board-head { top: calc(var(--board) / -2 - var(--seam-lap)); transform: rotateX(90deg); }
 .board-tail { bottom: calc(var(--board) / -2 - var(--seam-lap)); transform: rotateX(-90deg); }
 .stage[data-binding="hardcover"] .fore,
-.book-model[data-cover-stock] .fore {
+.book-model:is([data-soft-cover], [data-cover-stock]) .fore {
   width: var(--block);
   inset-block: var(--lip);
   right: calc(var(--lip) - var(--block) / 2);
 }
 .stage[data-binding="hardcover"] :is(.head, .tail),
-.book-model[data-cover-stock] :is(.head, .tail) { height: var(--block); right: var(--lip); }
+.book-model:is([data-soft-cover], [data-cover-stock]) :is(.head, .tail) { height: var(--block); right: var(--lip); }
 .stage[data-binding="hardcover"] .head,
-.book-model[data-cover-stock] .head { top: calc(var(--lip) - var(--block) / 2); }
+.book-model:is([data-soft-cover], [data-cover-stock]) .head { top: calc(var(--lip) - var(--block) / 2); }
 .stage[data-binding="hardcover"] .tail,
-.book-model[data-cover-stock] .tail { bottom: calc(var(--lip) - var(--block) / 2); }
+.book-model:is([data-soft-cover], [data-cover-stock]) .tail { bottom: calc(var(--lip) - var(--block) / 2); }
 .book-model :is(.front, .back)::after, .shelf-cover::after {
   content: "";
   position: absolute;
@@ -908,7 +912,9 @@ h1:focus { outline: none; }
 .book-model[data-rounded-corners] :is(.head, .tail) { right: calc(var(--corner-radius) + var(--edge-inset, 0px) - var(--seam-lap)); }
 .book-model[data-rounded-corners] .case-board::after { inset-block: var(--corner-radius); }
 .book-model[data-rounded-corners] :is(.board-head, .board-tail) { right: var(--corner-radius); }
-.stage[data-binding="hardcover"] .book-model { --edge-inset: var(--lip); }
+.stage[data-binding="hardcover"] .book-model { --lip: var(--case-overhang, 3px); --edge-inset: var(--lip); }
+.book-model[data-soft-cover] { --lip: 0px; }
+.book-model[data-soft-cover]:not([data-cover-stock]) { --board: min(calc(var(--depth) * .2), var(--soft-board)); }
 .corner-walls { position: absolute; inset: 0; transform-style: preserve-3d; pointer-events: none; }
 .corner-strip {
   position: absolute;
@@ -924,7 +930,7 @@ h1:focus { outline: none; }
   --strip-z: 0px;
 }
 .stage[data-binding="hardcover"] .corner-strip.edge-paper,
-.book-model[data-cover-stock] .corner-strip.edge-paper { --strip-height: var(--block); }
+.book-model:is([data-soft-cover], [data-cover-stock]) .corner-strip.edge-paper { --strip-height: var(--block); }
 .corner-strip:is(.front-rim, .back-rim) {
   --strip-inset: 0px;
   --strip-height: calc(var(--board) + .5px);
@@ -941,13 +947,13 @@ h1:focus { outline: none; }
   transform: translate(50%, 50%) translateZ(var(--strip-z)) rotateZ(var(--edge-angle)) rotateX(-90deg);
 }
 
-.stage[data-binding="hardcover"] .book-model[data-round-spine] :is(.spine, .spine.artwork) {
-  background: transparent;
+.stage :is(.book-model[data-shaped-spine], .book-model[data-book][data-shaped-spine]) :is(.spine, .spine.artwork) {
+  background: var(--case-color, var(--binding, #b3a897));
   overflow: visible;
   transform-style: preserve-3d;
 }
-.book-model[data-round-spine] .spine > :is(img, span),
-.book-model[data-round-spine] .spine.artwork::after { visibility: hidden; }
+.book-model[data-shaped-spine] .spine > :is(img, span),
+.book-model[data-shaped-spine] .spine.artwork::after { visibility: hidden; }
 .round-spine { position: absolute; inset: 0; transform-style: preserve-3d; }
 .round-spine-panel {
   position: absolute;
@@ -967,19 +973,65 @@ h1:focus { outline: none; }
   font-style: normal;
 }
 .round-spine-print img { width: 100%; height: 100%; object-fit: contain; }
-.round-spine-panel::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(49 34 23 / var(--arc-left)), rgb(49 34 23 / var(--arc-right))); }
+.round-spine-panel::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgb(255 249 236 / var(--arc-light-left)), rgb(255 249 236 / var(--arc-light-right))),
+    linear-gradient(90deg, rgb(36 28 22 / var(--arc-shadow-left)), rgb(36 28 22 / var(--arc-shadow-right))); }
 .round-spine::before, .round-spine::after {
   content: "";
   position: absolute;
   inset-inline: 0;
-  height: calc(var(--depth) * .2);
-  background: var(--case-color, var(--binding, #b3a897));
+  height: calc(var(--depth) * var(--spine-rise));
+  background: linear-gradient(90deg, #1a171426, #fffff80c 42%, #17151016), var(--case-color, var(--binding, #b3a897));
 }
 .round-spine::before, .round-spine::after {
-  clip-path: polygon(0 0, 100% 0, 87.5% 44%, 75% 75%, 62.5% 94%, 50% 100%, 37.5% 94%, 25% 75%, 12.5% 44%);
+  clip-path: var(--spine-cap);
 }
 .round-spine::before { top: 0; transform-origin: center top; transform: rotateX(90deg); }
 .round-spine::after { top: 100%; transform-origin: center top; transform: rotateX(90deg); }
+/* Folded jackets use the same printed image on each tangent plane. */
+.case-joint { position: absolute; inset: calc(-1 * var(--seam-lap)); transform-style: preserve-3d; pointer-events: none; }
+.joint-front { transform: translateZ(calc(var(--depth) / 2)); }
+.joint-back { transform: rotateY(180deg) translateZ(calc(var(--depth) / 2)); }
+.joint-backing { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; backface-visibility: hidden; }
+.joint-front > .joint-backing { clip-path: inset(0 calc(100% - var(--case-joint-width) - 1px) 0 0); }
+.joint-back > .joint-backing { clip-path: inset(0 0 0 calc(100% - var(--case-joint-width) - 1px)); }
+.case-joint-panel, .fore-arc-panel { position: absolute; inset-block: 0; overflow: hidden; backface-visibility: hidden; }
+.case-joint-panel > img {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: calc(var(--material-width) + 2 * var(--seam-lap));
+  max-width: none;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: left center;
+}
+.case-joint-panel::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(rgb(255 255 250 / var(--fold-light)), rgb(255 255 250 / var(--fold-light))),
+    linear-gradient(rgb(25 22 18 / var(--fold-shadow)), rgb(25 22 18 / var(--fold-shadow)));
+}
+.book-model > .front[data-folded-print] { clip-path: inset(-1px -1px -1px calc(var(--case-joint-width) - .25px)); }
+.book-model > .back[data-folded-print] { clip-path: inset(-1px calc(var(--case-joint-width) - .25px) -1px -1px); }
+.book-model > :is(.front, .back)[data-folded-print]::after { background-image: linear-gradient(116deg, #fff1, transparent 37%, #16140e09); }
+.book-model[data-shaped-spine] {
+  --cut-fibres: repeating-linear-gradient(var(--paper-angle, 90deg), #44382414 0 .35px, transparent .6px 1.6px, #fff2 1.8px 2.1px, transparent 2.4px 3.7px, #554b3214 3.8px 4.3px, transparent 4.6px 6.1px);
+}
+.book-model[data-shaped-spine] :is(.head, .tail, .fore):not([data-cut]), .fore-arc-print {
+  background: linear-gradient(115deg, #fff3, transparent 35% 78%, #5545370d), var(--cut-fibres), var(--paper-color, #efede4);
+}
+.book-model[data-shaped-spine][data-hollow-cut] > .fore {
+  transform-style: preserve-3d;
+  overflow: visible;
+  background: transparent;
+}
+.fore-arc { position: absolute; inset: 0; transform-style: preserve-3d; }
+.book-model[data-hollow-cut] > .fore > .edge-scan { visibility: hidden; }
+.fore-arc-print { position: absolute; top: 0; left: 50%; width: var(--block); height: 100%; transform-origin: left center; }
+.fore[data-cut] .fore-arc-print { background: var(--cut-paint, var(--paper-color, #efede4)); }
+.fore-arc-panel::after { content: ""; position: absolute; inset: 0; background: rgb(59 49 36 / var(--edge-shadow)); }
+.book-model[data-hollow-cut] > :is(.head, .tail) { clip-path: var(--fore-contour); }
 .shelf-book[data-round-spine] .shelf-spine::after {
   content: "";
   position: absolute;
