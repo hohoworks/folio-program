@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { addReaderWire, bandStops, modelWireCurves, scanWindow, wireGeometry } from '../dist/book-surfaces.js';
+import { addReaderWire, bandStops, coverPunchLayout, modelWireCurves, scanWindow, wireGeometry } from '../dist/book-surfaces.js';
 import { bookLeafGeometry, physicalSpreads } from '../dist/book-format.js';
 import { addReaderSaddle } from '../dist/saddle-material.js';
 import { resolveMockupDetails } from '../dist/mockup-options.js';
@@ -117,6 +117,54 @@ test('each exposed spiral turn crosses the binding at right angles on single pag
       }
     }
   }
+});
+
+test('both covers, the wire through the stack, and each open page share the same drill guide', () => {
+  for (const binding of ['spiral', 'ring']) {
+    for (const side of ['left', 'right', 'top', 'bottom']) {
+      for (const [diameter, depth] of [[4, .5], [30, 22], [65, 72]]) {
+        const book = { bindingType: binding, trimSizeMm: [210, 148],
+          mockupDetails: { ringPlacement: side, ringCount: 3, ringDiameterMm: diameter }, ringPositions: [8, 43, 93] };
+        const guide = coverPunchLayout(book);
+        const geom = wireGeometry(binding, resolveMockupDetails(book.mockupDetails), book.ringPositions, book.trimSizeMm, depth, 17);
+        for (const [i, [x, y]] of guide.centers.entries()) {
+          const bore = geom.rings[i].filter(p => p.local[0] > 0 && Math.abs(p.local[2]) <= depth / 2);
+          assert.ok(bore.length >= 3);
+          for (const p of bore) {
+            assert.ok(Math.hypot(p.xyz[0] - x, p.xyz[1] - y) < 1e-9, 'wire traverses the straight bore');
+          }
+          for (const face of [1, -1]) {
+            assert.ok(bore.some(p => p.local[2] === face * depth / 2));
+            assert.deepEqual(geom.holes.find(h => h.face === face && h.local[1] === guide.stations[i]).xyz,
+              [x, y, face * depth / 2]);
+          }
+        }
+        for (const pair of physicalSpreads(4)) {
+          const paths = readWire(book, pair);
+          const punch = [...paths['reader-wire-holes'].matchAll(/M([-\d.]+) ([-\d.]+)a([\d.]+)/g)];
+          const expected = guide.centers.flatMap(([x, y]) => {
+            const across = side === 'right' ? guide.width - x : x;
+            return [pair.left && [guide.width - across, y], pair.right && [guide.width + across, y]].filter(Boolean);
+          });
+          assert.equal(punch.length, expected.length);
+          punch.forEach(([, left, y, r], i) => {
+            assert.ok(Math.hypot(+left + +r - expected[i][0], +y - expected[i][1]) < .00002);
+            assert.ok(Math.abs(+r - guide.radius) < .00001);
+          });
+        }
+      }
+    }
+  }
+  assert.equal(coverPunchLayout({ bindingType: 'ring', bookForm: 'cards' }), null);
+  assert.equal(coverPunchLayout({ bindingType: 'hardcover' }), null);
+});
+
+test('an inset top-bound leaf cannot move a punch away from the cover hole', () => {
+  const book = { bindingType: 'ring', trimSizeMm: [120, 180], mockupDetails: { ringCount: 3, ringPlacement: 'top' } };
+  const full = { width: 120, height: 180, top: 0 }, inset = { width: 120, height: 85, top: 35 };
+  const layout = { width: 120, height: 180, coverTop: 0, faces: [inset, inset, full, full] };
+  const marks = readWire(book, { left: 2, right: 3 }, layout);
+  assert.equal(marks['reader-wire-holes'].match(/M/g).length, 3);
 });
 
 test('a stepped spiral spread punches only the printed face at each station', () => {
