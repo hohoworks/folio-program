@@ -185,6 +185,18 @@
               </div>
               <div class="mockup-adjustments">
                 <div class="construction-controls">
+                <fieldset data-bound class="mockup-group" id="cover-stock">
+                  <legend>표지 합지</legend>
+                  <label class="check-label"><input type="checkbox" id="cover-stock-enabled" aria-controls="cover-stock-fields"> 앞·뒤 표지에 합지 사용</label>
+                  <fieldset id="cover-stock-fields" hidden disabled aria-label="표지 합지 설정">
+                    <label for="cover-layer-count">표지 한 장의 층 수</label><select id="cover-layer-count"></select>
+                    <p class="help">각 표지의 바깥면이 1층입니다. 층별 색과 두께를 정하면 앞표지와 뒤표지의 잘린 단면에 같은 순서로 보입니다.</p>
+                    <div id="cover-layers" class="stock-layers"></div>
+                    <button type="button" class="text-button" id="add-cover-layer">합지 층 추가 +</button>
+                    <output class="help" id="cover-thickness-summary"></output>
+                    <div id="cover-section-preview" class="stock-section-preview" aria-hidden="true"></div>
+                  </fieldset>
+                </fieldset>
                 <fieldset data-bound><details id="mockup-details">
                   <summary>표지 마감과 제본 세부 설정</summary>
                   <fieldset class="mockup-group">
@@ -198,10 +210,15 @@
                     <legend>스프링과 링</legend>
                     <div class="fields two">
                       <div><label for="ring-count">감은 횟수 또는 링 개수</label><input id="ring-count" type="number" step="1"></div>
-                      <div><label for="ring-diameter-mm">지름 (mm)</label><input id="ring-diameter-mm" type="number" step="any"></div>
-                      <div class="material-colors"><label for="ring-color">철사 색</label><input id="ring-color" type="color"></div>
+                      <div><label for="ring-diameter-mm">링 지름 (mm)</label><input id="ring-diameter-mm" type="number" step="any"></div>
+                      <div class="material-colors"><label for="ring-color">링 색</label><input id="ring-color" type="color"></div>
                       <div><label for="ring-placement">제본 위치</label><select id="ring-placement"><option value="left">왼쪽</option><option value="right">오른쪽</option><option value="top">위</option><option value="bottom">아래</option></select></div>
                     </div>
+                    <fieldset data-bindings="spiral" hidden disabled>
+                      <label for="wire-diameter-mm">스프링 선재 굵기 (mm)</label>
+                      <input id="wire-diameter-mm" type="number" step="0.1" inputmode="decimal" placeholder="자동" aria-describedby="wire-diameter-help">
+                      <p class="help" id="wire-diameter-help">철사나 플라스틱 한 가닥의 지름을 0.4~5 mm로 정합니다. 비워두면 자동입니다. 링이 작거나 촘촘하면 서로 겹치지 않는 굵기까지만 표시합니다.</p>
+                    </fieldset>
                     <fieldset data-bindings="ring">
                       <label for="ring-positions">링별 위치 (%) <span>선택</span></label><input id="ring-positions" placeholder="15, 50, 85" aria-describedby="ring-positions-help">
                       <p class="help" id="ring-positions-help">빈칸이면 균등하게 놓습니다. 직접 배치할 때는 위에서 아래로, 가로 제본은 왼쪽에서 오른쪽으로 링마다 0~100 사이의 위치를 입력하세요.</p>
@@ -265,18 +282,6 @@
                     <div id="edge-bands"></div><button class="text-button" type="button" id="add-edge-band">색지 구간 추가 +</button>
                   </fieldset>
                 </details>
-                <fieldset data-bound class="mockup-group" id="cover-stock">
-                  <legend>표지 합지</legend>
-                  <label class="check-label"><input type="checkbox" id="cover-stock-enabled" aria-controls="cover-stock-fields"> 앞·뒤 표지에 합지 사용</label>
-                  <fieldset id="cover-stock-fields" hidden disabled aria-label="표지 합지 설정">
-                    <label for="cover-layer-count">표지 한 장의 층 수</label><select id="cover-layer-count"></select>
-                    <p class="help">앞표지와 뒤표지에 같은 구성을 적용합니다. 1층은 각 표지의 바깥면입니다.</p>
-                    <div id="cover-layers" class="stock-layers"></div>
-                    <button type="button" class="text-button" id="add-cover-layer">합지 층 추가 +</button>
-                    <output class="help" id="cover-thickness-summary"></output>
-                    <div id="cover-section-preview" class="stock-section-preview" aria-hidden="true"></div>
-                  </fieldset>
-                </fieldset>
                 <fieldset data-cards hidden disabled class="mockup-group" id="card-stock">
                   <legend>카드 용지</legend>
                   <label for="card-corner">네 모서리 둥글기 (mm)</label><input type="number" id="card-corner" min="0" max="100" step="any" value="0">
