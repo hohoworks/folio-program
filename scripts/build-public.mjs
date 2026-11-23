@@ -9,7 +9,7 @@ import { localizedSiteTitles, migrateStarterSite } from '../dist/site-title.js';
 const program = [
   'index.html', '404.html', '_headers', 'assets/folio.svg', 'assets/sewn-signatures.webp', 'style.css', 'mobile-reader.css', 'web-fonts.js',
   'viewer.js', 'catalog.js', 'shelf.js', 'book-material.js', 'mockup-options.js', 'project-tags.js', 'project-media.js', 'title-language.js', 'site-language.js', 'site-title.js', 'curl.js', 'mobile-reader.js',
-  'punctuation.js', 'assets/fonts/hoho-punctuation.woff2', 'assets/fonts/OFL.txt',
+  'punctuation.js', 'book-format.js', 'book-surfaces.js', 'book-surfaces.css', 'assets/fonts/hoho-punctuation.woff2', 'assets/fonts/OFL.txt',
 ];
 const demoProgram = ['library.js', 'book.js', 'demo-projects.js'];
 const programPaths = new Set([...program, ...demoProgram, ...catalogAssets({ books: [], demo: true })]);

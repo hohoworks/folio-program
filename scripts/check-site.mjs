@@ -46,7 +46,13 @@ export function catalogAssets(catalog) {
     if (!Array.isArray(book.pages) || !book.pages.length) throw new Error('내지가 비어 있습니다. ' + book.title);
     if (book.firstPageSide != null && !['left', 'right'].includes(book.firstPageSide)) throw new Error('첫 페이지 위치를 확인해주세요. ' + book.title);
     if (book.joinSplitPages === true && book.pages.length % 2) throw new Error('반쪽 이미지를 합치려면 짝이 모두 있어야 합니다. ' + book.title);
-    for (const page of book.pages) requireImage(page?.imageSrc, book.title);
+    for (const [index, page] of book.pages.entries()) {
+      if (book.bookForm === 'cards' && index % 2 === 1 && page?.blank === true && !page.imageSrc) continue;
+      requireImage(page?.imageSrc, book.title);
+    }
+    for (const edge of Object.values(book.edgeTreatments || {})) {
+      if (edge?.mode === 'scan') requireImage(edge.imageSrc, book.title);
+    }
     if (book.galleryImages != null && !Array.isArray(book.galleryImages)) throw new Error('책의 프로젝트 이미지 목록을 확인해주세요. ' + book.title);
     for (const picture of book.galleryImages || []) requireImage(picture?.imageSrc, book.title);
   }
