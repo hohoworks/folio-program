@@ -175,7 +175,7 @@ const radial = (side, x, y, z, width, height) => {
 };
 
 // A spiral advances a full pitch each revolution. An independent O closes at its own station.
-export function wireGeometry(binding, details, positions, [width, height], depth) {
+export function wireGeometry(binding, details, positions, [width, height], depth, steps = 16) {
   const { ringPlacement: side, ringCount: count, ringDiameterMm: diameter } = details;
   const length = ['left', 'right'].includes(side) ? height : width;
   const r = diameter / 2;
@@ -186,8 +186,8 @@ export function wireGeometry(binding, details, positions, [width, height], depth
   for (let index = 0; index < count; index++) {
     const center = binding === 'ring' && positions?.length === count ? positions[index] / 100 * length : (index + .5) * pitch;
     const vertices = [];
-    for (let step = 0; step <= 16; step++) {
-      const t = step / 16, a = t * Math.PI * 2;
+    for (let step = 0; step <= steps; step++) {
+      const t = step / steps, a = t * Math.PI * 2;
       const x = r * (Math.cos(a) - .18);
       const y = center + Math.sin(a) * wire * .65 + (binding === 'spiral' ? (t - .5) * pitch : 0);
       const z = rz * Math.sin(a);
@@ -207,7 +207,7 @@ export function wireGeometry(binding, details, positions, [width, height], depth
         const x = a[0] + (b[0] - a[0]) * t;
         if (x <= 0) continue;
         const y = a[1] + (b[1] - a[1]) * t;
-        holes.push({ xyz: radial(side, x, y, z, width, height), face });
+        holes.push({ xyz: radial(side, x, y, z, width, height), local: [x,y,z], face });
         break;
       }
     }
@@ -255,7 +255,97 @@ function wirePath(svg, data, wire) {
   }
 }
 
-function shelfWire(surface, geom, [width, height]) {
+// Stand each book on its binding axis. A shallow view across the punched edge
+// shows the paper between its covers and the turn of the wire around that edge.
+let profileSerial = 0;
+function wireProfile(surface, geom, [width, height], binding) {
+  const { side, wire, rings, length, depth } = geom;
+  const across = side === 'top' || side === 'bottom' ? height : width;
+  const reverse = side === 'top';
+  const facing = side === 'right' ? -1 : 1;
+  const half = depth / 2, yaw = .078, pitch = .165;
+  const project = ([x,y,z]) => [facing * (z + yaw*x), (reverse ? length-y : y) - pitch*x - .105*z];
+  const point = xyz => project(xyz).map(round).join(' ');
+  const line = (a,b) => 'M' + point(a) + 'L' + point(b);
+  const head = reverse ? length : 0, foot = length-head;
+  const corners = [0,across].flatMap(x => [0,length].flatMap(y => [-half,half].map(z => [x,y,z])));
+  const projected = [...corners, ...rings.flatMap(loop => loop.map(vertex => vertex.local))].map(project);
+  const pad = wire * .9;
+  const left = Math.min(...projected.map(p => p[0])) - pad, top = Math.min(...projected.map(p => p[1])) - pad;
+  const w = Math.max(...projected.map(p => p[0])) + pad - left, h = Math.max(...projected.map(p => p[1])) + pad - top;
+  const svg = pathSVG(surface, 'shelf-wire-spine', [left,top,w,h]);
+  surface.style.setProperty('--profile-height', 'min(' + mm(h,width) + ', calc(var(--shelf-height) * .84))');
+  surface.style.setProperty('--profile-ratio', round(w/h));
+  const defs = svgElement('defs', {}, svg);
+  const id = 'wire-profile-' + ++profileSerial;
+  const gradient = (name, stops, x1, x2) => {
+    const grad = svgElement('linearGradient', { id: id + name, gradientUnits: 'userSpaceOnUse', x1, x2, y1: 0, y2: 0 }, defs);
+    for (const [offset, color] of stops) svgElement('stop', { offset, 'stop-color': color }, grad);
+    return 'url(#' + id + name + ')';
+  };
+  const stock = 'var(--paper-color, #efede4)', board = 'var(--case-color, var(--binding, #b3a897))';
+  const mix = (color, weight, withColor) => 'color-mix(in srgb, ' + color + ' ' + weight + '%, ' + withColor + ')';
+  const paper = gradient('paper', [[0,mix(stock,65,'#504d46')],[.1,stock],[.55,mix(stock,93,'white')],[.92,stock],[1,mix(stock,73,'#70675d')]], -half,half);
+  const metal = gradient('metal', [[0,'var(--wire-shadow)'],[.14,'var(--wire-color)'],[.31,mix('var(--wire-color)',45,'white')],
+    [.49,'var(--wire-color)'],[.75,'var(--wire-shadow)'],[.89,'var(--wire-light)'],[1,'var(--wire-color)']], -geom.rz,geom.rz);
+  const face = (vertices, fill) => svgElement('path', { d: 'M' + vertices.map(point).join('L') + 'Z', fill }, svg);
+  const stroke = (d,color,weight,more={}) => svgElement('path', {d, stroke:color, 'stroke-width':weight,
+    fill:'none', 'stroke-linecap':'round', 'stroke-linejoin':'round', ...more}, svg);
+  face([[0,head,-half],[across,head,-half],[across,head,half],[0,head,half]], mix(stock,87,'white'));
+  face([[0,head,-half],[0,head,half],[0,foot,half],[0,foot,-half]], paper);
+  const lines = [];
+  // Individual sheet edges wrap continuously from the head onto the drilled edge.
+  const sheets = Math.max(3, Math.min(65, Math.round(depth/.72)));
+  for (let i = 1; i < sheets; i++) {
+    const z = (i / sheets - .5) * depth;
+    lines.push('M' + point([across,head,z]) + 'L' + point([0,head,z]) + 'L' + point([0,foot,z]));
+  }
+  stroke(lines.join(''), mix(stock,68,'#2f2a22'), Math.min(.19,depth/sheets*.20));
+  face([[0,head,half],[across,head,half],[across,foot,half],[0,foot,half]], board);
+  for (const z of [-half,half]) stroke('M' + point([across,head,z]) + 'L' + point([0,head,z]) + 'L' + point([0,foot,z]), mix(board,70,'#302c2a'), .52);
+  for (const hole of geom.holes) {
+    if (hole.face !== 1) continue;
+    const [cx,cy] = project(hole.local);
+    svgElement('ellipse', {cx,cy,rx:wire*.43,ry:wire*1.12, fill:mix(board,35,'#11100e')}, svg);
+  }
+  // Split segments where they enter the block or cross its far silhouette.
+  // Hidden wire cannot show through the sheets between the front and rear punches.
+  const turns = [];
+  for (const loop of rings) {
+    let drawing = false;
+    for (let i = 1; i < loop.length; i++) {
+      const a = loop[i-1].local, b = loop[i].local;
+      const at = t => a.map((v,k) => v+(b[k]-v)*t);
+      const splits = [0,1];
+      for (const [u,v] of [[a[0],b[0]],[a[2]-half,b[2]-half],[a[2]+yaw*a[0]+half,b[2]+yaw*b[0]+half]]) {
+        if (u*v < 0) splits.push(u/(u-v));
+      }
+      splits.sort((u,v) => u-v);
+      for (let j=1; j<splits.length; j++) {
+        const [x,,z] = at((splits[j-1]+splits[j])/2);
+        if (x > 0 && z < half && z+yaw*x > -half) { drawing=false; continue; }
+        if (!drawing) turns.push('M'+point(at(splits[j-1])));
+        turns.push('L'+point(at(splits[j])));
+        drawing=true;
+      }
+    }
+  }
+  const d = turns.join('');
+  stroke(d,'#25211e',wire*1.33,{opacity:.20, transform:'translate(.22 .55)'});
+  stroke(d,mix('var(--wire-color)',45,'#252422'),wire*1.13);
+  stroke(d,metal,wire*.84);
+  stroke(d,metal,wire*.27,{transform:'translate(0 '+round(-wire*.24)+')',style:'filter:brightness(1.43)'});
+  if (binding === 'ring') {
+    const seams = [];
+    for (const loop of rings) {
+      const [x,y,z] = loop[Math.floor(loop.length/2)].local;
+      seams.push(line([x,y-wire*.39,z],[x,y+wire*.39,z]));
+    }
+    stroke(seams.join(''), 'var(--wire-shadow)', wire*.28);
+  }
+}
+
+function shelfWire(surface, geom, [width, height], binding) {
   const [minX, minY, maxX, maxY] = geom.rings.flat().reduce((bounds, { xyz: [x,y] }) =>
     [Math.min(bounds[0],x), Math.min(bounds[1],y), Math.max(bounds[2],x), Math.max(bounds[3],y)], [Infinity, Infinity, -Infinity, -Infinity]);
   const pad = geom.wire;
@@ -268,22 +358,18 @@ function shelfWire(surface, geom, [width, height]) {
   for (const { xyz: [cx,cy], face } of geom.holes) {
     if (face === 1) svgElement('circle', { cx, cy, r: geom.wire * 1.05, fill: '#3d3833' }, front);
   }
-  const frontPath = [], spinePath = [];
+  const frontPath = [];
   for (const loop of geom.rings) {
     let drawing = false;
-    for (const [index, {xyz, local: [x, , z]}] of loop.entries()) {
+    for (const {xyz, local: [x, , z]} of loop) {
       if (x < 0 || z >= geom.depth / 2) {
         frontPath.push((drawing ? 'L' : 'M') + round(xyz[0]) + ' ' + round(xyz[1]));
         drawing = true;
       } else drawing = false;
-      spinePath.push((index ? 'L' : 'M') + round(z) + ' ' + round(xyz[1]));
     }
   }
   wirePath(front, frontPath.join(''), geom.wire);
-  // Looking straight at the spine exposes the complete wire around the paper block.
-  const side = pathSVG(surface, 'shelf-wire-spine', [-geom.rz - pad, -pad, 2 * (geom.rz + pad), height + 2 * pad]);
-  side.style.width = mm(2 * (geom.rz + pad), width);
-  wirePath(side, spinePath.join(''), geom.wire);
+  wireProfile(surface, geom, [width,height], binding);
 }
 
 const wireKeys = new WeakMap();
@@ -321,9 +407,10 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   if (wireKeys.get(surface) !== wireKey) {
     for (const node of surface.querySelectorAll(':scope > :is(.model-hardware, .shelf-hardware, .shelf-wire-spine)')) node.remove();
     if (hardware) {
-      const wire = wireGeometry(book.bindingType, details, book.ringPositions, size, depth);
+      // The shelf batches arcs into SVG paths. The orbit uses a separate DOM plane per segment.
+      const wire = wireGeometry(book.bindingType, details, book.ringPositions, size, depth, model ? 16 : 48);
       if (model) modelWire(surface, wire, size);
-      else shelfWire(surface, wire, size);
+      else shelfWire(surface, wire, size, book.bindingType);
     }
     wireKeys.set(surface, wireKey);
   }

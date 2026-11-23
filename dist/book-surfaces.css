@@ -73,10 +73,16 @@
 }
 .wire-segment::after { transform: rotateX(90deg); }
 .shelf-hardware { opacity: 0; transition: opacity .48s; }
+.shelf-book[data-wire-bound] .shelf-spine { display: none; }
+.shelf-book[data-wire-bound]:not(.is-preview) {
+  width: max(24px, calc(var(--profile-height) * var(--profile-ratio)));
+  height: var(--profile-height);
+}
 .shelf-wire-spine {
   left: 50%;
-  height: 100%;
-  top: 0;
+  bottom: 0;
+  height: var(--profile-height);
+  width: calc(var(--profile-height) * var(--profile-ratio));
   transform: translateX(-50%);
   transition: opacity .48s;
 }
