@@ -48,6 +48,15 @@ export function projectVideoPlayer(value) {
   return { provider: 'Vimeo', src: player.href };
 }
 
+// Editors may still publish a link when its host has no exact CSP host-source representation.
+export function projectFrame(value) {
+  const href = projectEmbedURL(value);
+  if (!href) return null;
+  const frame = projectVideoPlayer(href) ?? { src: href };
+  const { hostname } = new URL(frame.src);
+  return /^[a-z0-9-]+(?:\.[a-z0-9-]+)*$/.test(hostname) ? frame : null;
+}
+
 // Image-only catalogues predate ordered project media.
 export function projectMedia(project) {
   if (project?.media !== undefined) return Array.isArray(project.media) ? project.media : [];

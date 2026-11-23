@@ -22,6 +22,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; min-width: 280px; color: var(--ink); background: var(--canvas); font: var(--text-weight) 14px/1.5 var(--type); }
+.not-found { margin: clamp(1.5rem, 6vw, 5rem); font-size: 1rem; line-height: 1.6; }
+.not-found h1 { margin-block: 1em; font-size: 1.5rem; }
 button { font: inherit; color: inherit; }
 a { color: inherit; text-decoration-thickness: var(--underline-thickness); }
 ::selection { background: var(--accent); color: #fff; }

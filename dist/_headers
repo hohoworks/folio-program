@@ -1,5 +1,7 @@
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://use.typekit.net/gwz2aiq.js; style-src 'self' 'unsafe-inline' https://use.typekit.net https://p.typekit.net; img-src 'self' data: blob: https://p.typekit.net; font-src 'self' https://use.typekit.net; connect-src 'self' https://use.typekit.net https://p.typekit.net https://primer.typekit.net; media-src 'self'; frame-src https:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://use.typekit.net/gwz2aiq.js; style-src 'self' 'unsafe-inline' https://use.typekit.net https://p.typekit.net; img-src 'self' data: blob: https://p.typekit.net; font-src 'self' https://use.typekit.net; connect-src 'self' https://use.typekit.net https://p.typekit.net https://primer.typekit.net; media-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+  Content-Security-Policy-Report-Only: style-src-attr 'none'
+  ! Access-Control-Allow-Origin
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
   Referrer-Policy: strict-origin-when-cross-origin
