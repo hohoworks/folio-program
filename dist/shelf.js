@@ -115,7 +115,7 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
 
   function holdsPointer(x, y) {
     const turning = performance.now() - previewStarted < turnDuration + 180;
-    return hoverAnchor && Math.hypot(x - hoverAnchor.x, y - hoverAnchor.y) < (turning ? 10 : 4);
+    return hoverAnchor && Math.hypot(x - hoverAnchor.x, y - hoverAnchor.y) < (turning ? 10 : 8);
   }
 
   for (const [index, book] of books.entries()) {
