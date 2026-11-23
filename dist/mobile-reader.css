@@ -63,7 +63,7 @@
     background: var(--canvas);
   }
   .page-navigation button { min-width: 44px; min-height: 44px; }
-  #page-number { height: 44px; min-width: 44px; }
+  #page-number, #card-side { height: 44px; min-width: 44px; }
   #page-jump { gap: 3px; }
   #page-error:not(:empty) { padding-block: 2px 4px; }
 }
@@ -152,5 +152,5 @@
     transition: none;
   }
   #book-viewer[data-reader-form="cards"] .page-navigation { width: 100%; }
-  #card-side { height: 44px; font-size: 16px; }
+  #card-side { font-size: 16px; }
 }
