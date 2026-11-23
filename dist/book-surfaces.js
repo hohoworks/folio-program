@@ -782,10 +782,10 @@ export function setBookSurfaces(surface, book, details, size, depth) {
       paintFace(edge, cut, state);
     }
   } else {
-    // The open shelf cover is seen head-on. A card deck shows its plies
-    // on the closed spine, with the selected card's flat face when open.
-    if (cards) surface.querySelector(':scope > .shelf-cuts')?.remove();
-    else shelfEdges(surface, state);
+    // Only the wirebound projection reserves room for cut edges.
+    // A head-on cover hides the cuts; genuinely larger leaves remain visible.
+    if (hardware) shelfEdges(surface, state);
+    else surface.querySelector(':scope > .shelf-cuts')?.remove();
     shelfLeaves(surface, layout, size);
     paintFace(spine, 'spine', { ...state, bands: null });
   }
