@@ -209,7 +209,7 @@ h1:focus { outline: none; }
 }
 .shelf-book[data-card-stock] .shelf-cover:has(> .card-thumbnail) { border-radius: 0; overflow: visible; }
 .shelf-cover:has(> .card-thumbnail)::after,
-.shelf-book:has(.card-thumbnail[data-mode="single"]) > .shelf-cuts { display: none; }
+.shelf-book[data-card-stock] > .shelf-cuts { display: none; }
 .card-thumbnail {
   display: block;
   position: absolute;
