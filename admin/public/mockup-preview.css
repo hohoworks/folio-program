@@ -1,7 +1,7 @@
 :host { display: block; margin-top: 14px; border: 1px solid #dedede; }
 .stage[data-proportional] {
   --stage-height: clamp(190px, 30vw, 260px);
-  --model-width: min(62cqw, calc(var(--stage-height) * .68 * var(--book-ratio) / (1 + var(--extra-ribbon-height, 0))));
+  --model-width: min(62cqw, calc(var(--stage-height) * .68 * var(--book-ratio)));
   --type: system-ui, sans-serif;
   --ink: #171717;
   display: grid;

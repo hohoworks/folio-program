@@ -331,15 +331,15 @@ h1:focus { outline: none; }
   overflow: hidden;
 }
 .stage[data-proportional] {
-  --model-width: min(72cqw, calc(var(--model-size) * var(--book-ratio) / .738), calc(var(--stage-height) * .72 * var(--book-ratio) / (1 + var(--extra-ribbon-height, 0))));
+  --model-width: min(72cqw, calc(var(--model-size) * var(--book-ratio) / .738), calc(var(--stage-height) * .72 * var(--book-ratio)));
 }
 .stage[data-arriving] { z-index: 1; overflow: visible; }
 .cover-view, .model-area { position: relative; width: 100%; height: 100%; display: grid; place-items: center; }
 .orbit { position: relative; width: 100%; height: 100%; display: grid; place-items: center; touch-action: none; cursor: grab; user-select: none; }
 .orbit:focus-visible { outline-offset: -3px; }
 .orbit.dragging { cursor: grabbing; }
-.model-frame { width: var(--model-width); translate: 0 var(--ribbon-lift, 0px); perspective: 1300px; transform-style: preserve-3d; }
-.model-shadow { position: absolute; left: 50%; top: calc(50% + var(--ribbon-lift, 0px)); transform: translate(var(--contact-x, 0px), var(--contact-y, 0px)); pointer-events: none; }
+.model-frame { width: var(--model-width); perspective: 1300px; transform-style: preserve-3d; }
+.model-shadow { position: absolute; left: 50%; top: 50%; transform: translate(var(--contact-x, 0px), var(--contact-y, 0px)); pointer-events: none; }
 .model-shadow::before, .model-shadow::after { content: ""; position: absolute; border-radius: 50%; }
 .model-shadow::before {
   left: calc(var(--contact-x, 0px) * -.6 + var(--footprint, 180px) * .08);
@@ -634,9 +634,13 @@ h1:focus { outline: none; }
   width: 100%;
   padding-inline: 8px;
   padding-top: 8px;
+  /* Extend the scrollport below the shelf line without moving the books. */
+  padding-bottom: var(--ribbon-clearance, 0px);
+  margin-bottom: calc(-1 * var(--ribbon-clearance, 0px));
   overflow-x: auto;
   overflow-anchor: none;
-  border-bottom: 1px solid var(--accent);
+  border-bottom: 1px solid transparent;
+  background: linear-gradient(var(--accent), var(--accent)) left bottom var(--ribbon-clearance, 0px) / 100% 1px no-repeat border-box;
 }
 .shelf::before, .shelf::after { content: ''; flex: 0 0 50%; }
 
@@ -811,23 +815,36 @@ h1:focus { outline: none; }
   background: linear-gradient(90deg, #30211052, #fff3 45%, #32220f3d),
     repeating-linear-gradient(26deg, var(--headband-a) 0 2px, var(--headband-b) 2px 3.5px);
 }
-.book-model[data-ribbon]::before, .shelf-book[data-ribbon]::before {
-  content: "";
+.book-ribbon {
+  --ribbon-inset: calc(var(--lip, 0px) + 1px);
+  --warp-pitch: clamp(1px, calc(var(--ribbon-width) * .12), 2px);
+  --sheen: calc(43% + 12% * sin(var(--ry, 0deg)));
   position: absolute;
-  left: 58%;
-  top: 99.2%;
-  width: max(3px, calc(var(--material-width) * .035));
-  height: var(--ribbon-length);
-  transform: rotateZ(var(--ribbon-angle));
+  left: 57%;
+  top: calc(100% - var(--ribbon-inset));
+  width: var(--ribbon-width);
+  height: calc(var(--ribbon-length) + var(--ribbon-inset));
+  /* Slip the ribbon between the first leaves, just inside the front board. */
+  transform: translateZ(calc(var(--block, 0px) * .47)) rotateZ(var(--ribbon-angle)) rotateX(-5deg);
   transform-origin: center top;
-  background: linear-gradient(98deg, #0003, #fff3 24%, transparent 56%, #0002),
-    repeating-linear-gradient(19deg, transparent 0 1.5px, #ffffff19 1.5px 2px), var(--ribbon-color);
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 58% 91%, 0 100%);
+  background:
+    linear-gradient(180deg, #2117135e, transparent calc(var(--ribbon-inset) + 15%)),
+    linear-gradient(100deg, #120c0a42, transparent 14%, #fff5 var(--sheen), transparent 72%, #1c100c40),
+    repeating-linear-gradient(86deg, #fff2 0, transparent calc(var(--warp-pitch) * .55) var(--warp-pitch)),
+    var(--ribbon-color);
+  clip-path: polygon(0 0, 100% 0, 98% calc(100% - min(22%, var(--ribbon-width) * .34)), 2% 100%);
   pointer-events: none;
 }
-.shelf-book[data-ribbon]::before { opacity: 0; }
-.shelf-book.is-preview[data-ribbon] { margin-bottom: var(--ribbon-length); }
-.shelf-book.is-preview[data-ribbon]::before { opacity: 1; }
+[data-ribbon-material="cotton"] > .book-ribbon {
+  background:
+    linear-gradient(180deg, #221b1755, transparent calc(var(--ribbon-inset) + 12%)),
+    linear-gradient(92deg, #2019122b, #fff1 28%, transparent 61%, #20191225),
+    repeating-linear-gradient(4deg, #ffefd317 0, transparent calc(var(--warp-pitch) * .55) var(--warp-pitch)),
+    repeating-linear-gradient(86deg, #211a151c 0, transparent calc(var(--warp-pitch) * .55) var(--warp-pitch)),
+    var(--ribbon-color);
+}
+.shelf-book > .book-ribbon { visibility: hidden; }
+.shelf-book.is-preview > .book-ribbon { visibility: visible; }
 
 .book-model[data-rounded-corners] .front,
 .shelf-book[data-rounded-corners] .shelf-cover { border-radius: 0 var(--corner-radius) var(--corner-radius) 0; }

@@ -122,6 +122,22 @@ function saddleFasteners(spine, count) {
   spine.append(row);
 }
 
+function setRibbon(surface, material) {
+  const existing = surface.querySelector(':scope > .book-ribbon');
+  surface.toggleAttribute('data-ribbon', Boolean(material));
+  if (!material) {
+    existing?.remove();
+    delete surface.dataset.ribbonMaterial;
+    return;
+  }
+  surface.dataset.ribbonMaterial = material;
+  if (existing) return;
+  const ribbon = document.createElement('i');
+  ribbon.className = 'book-ribbon';
+  ribbon.setAttribute('aria-hidden', 'true');
+  surface.prepend(ribbon);
+}
+
 function setPhysicalDetails(surface, book, width) {
   const d = resolveMockupDetails(book.mockupDetails);
   const cards = book.bookForm === 'cards';
@@ -137,7 +153,7 @@ function setPhysicalDetails(surface, book, width) {
     '--custom-groove': d.grooveWidthMm == null ? null : d.grooveWidthMm / width * 100 + '%',
     '--corner-radius': length(radius),
     '--headband-a': d.headbandColor, '--headband-b': d.headbandAccentColor,
-    '--ribbon-color': d.ribbonColor, '--ribbon-length': length(d.ribbonLengthMm),
+    '--ribbon-color': d.ribbonColor, '--ribbon-length': length(d.ribbonLengthMm), '--ribbon-width': length(4),
     '--ribbon-angle': d.ribbonAngle + 'deg',
     '--staple-color': d.stapleColor, '--staple-width': length(d.stapleThicknessMm),
     // Each tile has two evenly spaced rows of stitching.
@@ -152,19 +168,13 @@ function setPhysicalDetails(surface, book, width) {
   }
   surface.toggleAttribute('data-endpaper', hardcover && Boolean(d.endpaperColor));
   surface.toggleAttribute('data-headband', hardcover && d.headbandEnabled);
-  surface.toggleAttribute('data-ribbon', hardcover && d.ribbonEnabled);
+  setRibbon(surface, hardcover && d.ribbonEnabled && d.ribbonLengthMm > 0 ? d.ribbonMaterial : null);
   surface.toggleAttribute('data-round-spine', hardcover && d.spineShape === 'round');
   surface.toggleAttribute('data-rounded-corners', radius > 0);
   surface.toggleAttribute('data-colored-sewing', book.bindingType === 'exposed-sewn' && Boolean(d.threadColor));
   surface.toggleAttribute('data-saddle-thread', saddle && d.stitchType === 'thread');
   const spine = surface.querySelector('.spine, .shelf-spine');
   if (model) {
-    const stage = surface.closest('.stage');
-    const drop = hardcover && d.ribbonEnabled ? d.ribbonLengthMm * Math.cos(d.ribbonAngle * Math.PI / 180) : 0;
-    // Reserve extra space for long ribbons at the bottom of a compact preview.
-    const extra = Math.max(0, drop / height - .12);
-    stage.style.setProperty('--extra-ribbon-height', extra);
-    stage.style.setProperty('--ribbon-lift', extra ? 'calc(var(--model-width) * ' + (-extra * height / width / 2) + ')' : '0px');
     roundedSpine(spine, hardcover && d.spineShape === 'round');
     roundedCorners(surface, radius > 0, hardcover, cards);
   }
