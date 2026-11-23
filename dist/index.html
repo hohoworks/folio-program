@@ -74,6 +74,11 @@
         <div id="library-gallery" class="library-gallery">
           <div id="shelf-gallery" class="shelf-gallery">
             <div id="shelf" class="shelf"></div>
+            <nav id="shelf-picker" class="shelf-picker" aria-label="책 탐색" hidden>
+              <button id="shelf-prev" type="button">← 이전 책</button>
+              <a id="shelf-picked" aria-live="polite"></a>
+              <button id="shelf-next" type="button">다음 책 →</button>
+            </nav>
           </div>
           <p id="library-empty" class="library-empty" hidden>아직 공개된 책이 없습니다.</p>
         </div>
