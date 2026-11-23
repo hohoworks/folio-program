@@ -18,8 +18,11 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
   let centerFrame = 0;
   let previousFrame = 0;
   let followPreview = true;
+  let centerSelection = false;
   let firstCenter = true;
-  let viewportWidth = 0;
+  let lastScrollLeft = 0;
+  let alignmentScrollLeft;
+  let scrollIdle;
 
   function centerPreview() {
     if (followPreview && !centerFrame) centerFrame = requestAnimationFrame(alignPreview);
@@ -34,35 +37,35 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     centerFrame = 0;
     if (!preview || !element.clientWidth || !followPreview) return;
     fitRibbon();
-    const parts = [...preview.querySelectorAll('.shelf-cover, .shelf-hardware, .shelf-leaves')]
-      .map(part => part.getBoundingClientRect()).filter(bounds => bounds.width > 0);
+    // On entry center the entire collection in the actual shelf pane. Each
+    // book's slot includes its wire or projecting leaves, but excludes the
+    // empty scroll space that lets the first and last books reach the middle.
+    const targets = centerSelection
+      ? preview.querySelectorAll('.shelf-cover, .shelf-hardware, .shelf-leaves')
+      : links.values();
+    const parts = Array.from(targets, part => part.getBoundingClientRect()).filter(bounds => bounds.width > 0);
     if (!parts.length) return;
     const left = Math.min(...parts.map(bounds => bounds.left));
     const right = Math.max(...parts.map(bounds => bounds.right));
     const viewport = element.getBoundingClientRect();
     const distance = (left + right - viewport.left - viewport.right) / 2;
     const elapsed = previousFrame ? Math.min(now - previousFrame, 32) : 16;
-    const smooth = !firstCenter && canAnimate() && Math.abs(distance) > 2;
+    const smooth = centerSelection && !firstCenter && canAnimate() && Math.abs(distance) > 2;
     const before = element.scrollLeft;
     const step = smooth ? Math.sign(distance) * Math.max(1, Math.abs(distance) * (1 - Math.exp(-elapsed / 75))) : distance;
     element.scrollLeft += step;
+    if (element.scrollLeft !== before) alignmentScrollLeft = element.scrollLeft;
     firstCenter = false;
     previousFrame = now;
     if (smooth && element.scrollLeft !== before) centerPreview();
     else previousFrame = 0;
   }
-  const sizeObserver = new ResizeObserver(() => {
-    // A manual pan keeps its position until the user selects a book or resizes.
-    if (element.clientWidth !== viewportWidth) {
-      viewportWidth = element.clientWidth;
-      followPreview = true;
-    }
-    centerPreview();
-  });
+  const sizeObserver = new ResizeObserver(centerPreview);
   sizeObserver.observe(element);
 
   function showPreview(link) {
     followPreview = true;
+    centerSelection = true;
     if (preview !== link) {
       preview?.classList.remove('is-preview');
       preview?.removeAttribute('aria-current');
@@ -236,6 +239,24 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
       pointer = hoverAnchor = { x: start.x, y: start.y };
     }
   });
+  element.addEventListener('scroll', () => {
+    if (!element.clientWidth) return;
+    const position = element.scrollLeft;
+    if (position === lastScrollLeft) return;
+    lastScrollLeft = position;
+    const aligned = position === alignmentScrollLeft;
+    alignmentScrollLeft = undefined;
+    if (aligned && !centerSelection) return;
+    // Native thumb drags and assistive scroll actions may deliver only scroll.
+    // A focus change can scroll its link before the requested alignment frame.
+    if (!aligned && !(centerSelection && centerFrame)) {
+      followPreview = false;
+      previousFrame = 0;
+    }
+    element.setAttribute('data-scrolling', '');
+    clearTimeout(scrollIdle);
+    scrollIdle = setTimeout(() => element.removeAttribute('data-scrolling'), 650);
+  }, { passive: true });
   element.addEventListener('wheel', () => {
     resetHover();
     if (pressed) pressed.dragged = true;
