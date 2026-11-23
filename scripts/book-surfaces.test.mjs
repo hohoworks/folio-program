@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { addReaderWire, bandStops, modelWireCurves, scanWindow, wireGeometry } from '../dist/book-surfaces.js';
-import { physicalSpreads } from '../dist/book-format.js';
+import { bookLeafGeometry, physicalSpreads } from '../dist/book-format.js';
+import { addReaderSaddle } from '../dist/saddle-material.js';
 import { resolveMockupDetails } from '../dist/mockup-options.js';
 import { spineRatio } from '../dist/book-material.js';
 
@@ -133,4 +134,44 @@ test('measured plies set the automatic stack depth and respect an explicit measu
     cardStock: { layers: ['#cccccc','#eeeeee'], layerThicknessMm: [.25,.75] } };
   assert.equal(spineRatio(deck), .04);
   assert.equal(spineRatio({ ...deck, spineWidthMm: 6 }), .06);
+});
+
+
+test('only the center opening of each stitched section shows its inner fasteners', () => {
+  const book = {
+    bookForm: 'bound', bindingType: 'saddle-stitch', trimSizeMm: [148, 210],
+    pages: Array.from({ length: 20 }, () => ({})),
+    saddleSections: [{ pages: 4 }, { pages: 8, sizeMm: [100, 150] }, { pages: 8 }],
+    mockupDetails: { stitchType: 'loop', stapleCount: 3, stapleInsetPercent: 20 },
+  };
+  const layout = bookLeafGeometry(book);
+  const spreads = physicalSpreads(book.pages.length);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  const node = tag => ({
+    tag, dataset: {}, children: [], attrs: {},
+    setAttribute(key, value) { this.attrs[key] = value; },
+    append(child) { this.children.push(child); },
+  });
+  globalThis.document = { createElementNS: (_, tag) => node(tag) };
+  try {
+    const centers = [];
+    for (const pair of spreads) {
+      const spread = node('div');
+      addReaderSaddle(spread, book, pair, layout, spreads);
+      if (!spread.children.length) continue;
+      const [marks] = spread.children;
+      centers.push([pair.left, Number(marks.dataset.section)]);
+      const punches = marks.children.filter(child => child.tag === 'ellipse');
+      assert.equal(punches.length, 6);
+      if (pair.left === 8) {
+        const centers = [0, 2, 4].map(i => (punches[i].attrs.cy + punches[i + 1].attrs.cy) / 2);
+        assert.deepEqual(centers, [60, 105, 150]);
+      }
+      assert.ok(marks.children.some(child => child.tag === 'path'));
+    }
+    assert.deepEqual(centers, [[2, 1], [8, 5], [16, 13]]);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, 'document', previous);
+    else delete globalThis.document;
+  }
 });
