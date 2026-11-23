@@ -1,5 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createLocalStore } from '../scripts/local-store.mjs';
+import { buildPublic } from '../scripts/build-public.mjs';
+import { catalogAssets } from '../scripts/check-site.mjs';
 import worker from './worker.mjs';
 import { MAX_PROJECT_VIDEO_BYTES } from '../dist/project-media.js';
 import { STOCK_PROJECT_TAGS } from '../dist/project-tags.js';
@@ -328,7 +335,7 @@ test('registration keeps the GitHub catalog and image references in one commit a
     method: 'POST', body: { ...body, pageRatio: 0 }, cookie,
   })).status, 400);
   assert.equal((await request('/api/books', {
-    method: 'POST', body: { ...body, bindingType: 'spiral' }, cookie,
+    method: 'POST', body: { ...body, bindingType: 'unknown-binding' }, cookie,
   })).status, 400);
   assert.equal((await request('/api/books', {
     method: 'POST', body: { ...body, registrationId: '../another-book' }, cookie,
@@ -1410,4 +1417,75 @@ test('mixed project media saves, reorders and safely removes files with revision
   assert.deepEqual((await onlyEmbed.json()).project.images, []);
   assert.equal(state.files.size, 0);
   assert.equal((await request(preview, { cookie })).status, 404);
+});
+
+
+test('local card registration, reopening, reorder and publication retain scan files and the automatic cover', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'folio-card-integration-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const content = join(root, 'content'), staging = join(root, 'uploads'), output = join(root, 'public');
+  await mkdir(content);
+  await writeFile(join(content, 'catalog.json'), JSON.stringify({ books: [], projects: [] }));
+  const bindings = { ...env, LOCAL_STORE: await createLocalStore(content, staging) };
+  const cookie = await session();
+  const post = (path, body, headers) => request(path, { method: 'POST', cookie, body, headers }, bindings);
+  async function asset(file, mime) {
+    const bytes = await readFile(new URL('../dist/assets/' + file, import.meta.url));
+    const response = await post('/api/assets', bytes, { 'Content-Type': mime });
+    assert.equal(response.status, 201);
+    return { bytes, upload: await response.json() };
+  }
+  const [first, second, scan] = await Promise.all([
+    asset('forest-cover.webp', 'image/webp'), asset('forest.jpg', 'image/jpeg'), asset('sewn-signatures.webp', 'image/webp'),
+  ]);
+  const registrationId = crypto.randomUUID();
+  const registration = {
+    registrationId, title: 'Cards', bookForm: 'cards', cardStock: { cornerRadiusMm: 4, layers: ['#eeeeee', '#335599'] },
+    coverRatio: first.upload.ratio, pageRatio: first.upload.ratio, edgeTreatments: { head: { mode: 'scan', rotation: 90 } },
+    assets: { edgeScans: { head: scan.upload }, cards: [
+      { front: { ...first.upload, sizeMm: [80, 100] }, back: null },
+      { front: second.upload, back: first.upload },
+    ] },
+  };
+  const created = await post('/api/books', registration);
+  const saved = await created.json();
+  assert.equal(created.status, 201, JSON.stringify(saved));
+  const prefix = 'assets/books/cards-' + registrationId + '/';
+  const paths = [prefix + 'card-1-front.webp', prefix + 'card-2-front.jpg', prefix + 'card-2-back.webp', prefix + 'edge-head.webp'];
+  const [frontA, frontB, backB, scanPath] = paths;
+  assert.equal(saved.book.coverImages.front, frontA);
+  assert.deepEqual(saved.book.pages.map(face => face.imageSrc || face), [frontA, { blank: true }, frontB, backB]);
+  assert.equal(saved.book.edgeTreatments.head.imageSrc, scanPath);
+  assert.equal((await (await post('/api/books', registration)).json()).commit, saved.commit);
+
+  bindings.LOCAL_STORE = await createLocalStore(content, staging);
+  const reopened = await (await request('/api/catalog', { cookie }, bindings)).json();
+  assert.deepEqual(reopened.books, [saved.book]);
+  const edit = await post('/api/books', {
+    id: saved.book.id, baseRevision: reopened.books[0].revision, registrationId: crypto.randomUUID(),
+    edgeTreatments: { head: { mode: 'scan', rotation: 270, crop: { x: 5, y: 0, width: 90, height: 100 } } },
+    assets: { cards: [{ front: { imageSrc: frontB }, back: { imageSrc: backB } }, { front: { imageSrc: frontA }, back: null }] },
+  });
+  const edited = await edit.json();
+  assert.equal(edit.status, 200, JSON.stringify(edited));
+  assert.equal(edited.book.coverImages.front, frontB);
+  assert.equal(edited.book.coverRatio, second.upload.ratio);
+  assert.deepEqual(edited.book.pages[2].sizeMm, [80, 100]);
+  assert.deepEqual(edited.book.pages.map(face => face.imageSrc || face), [frontB, backB, frontA, { blank: true }]);
+  assert.deepEqual(edited.book.edgeTreatments.head, {
+    mode: 'scan', imageSrc: scanPath, rotation: 270, crop: { x: 5, y: 0, width: 90, height: 100 },
+  });
+  const preview = await request('/api/preview?path=' + encodeURIComponent(scanPath), { cookie }, bindings);
+  assert.equal(preview.status, 200);
+  assert.deepEqual(Buffer.from(await preview.arrayBuffer()), scan.bytes);
+
+  await buildPublic(fileURLToPath(new URL('../', import.meta.url)), { contentDir: content, outputDir: output });
+  const published = JSON.parse(await readFile(join(output, 'catalog.json'), 'utf8'));
+  assert.deepEqual(catalogAssets(published), new Set(paths));
+  assert.deepEqual(published.books[0].pages, edited.book.pages);
+  assert.deepEqual(published.books[0].coverImages, edited.book.coverImages);
+  assert.deepEqual(published.books[0].edgeTreatments, edited.book.edgeTreatments);
+  for (const [path, bytes] of [[frontA, first.bytes], [frontB, second.bytes], [backB, first.bytes], [scanPath, scan.bytes]]) {
+    assert.deepEqual(await readFile(join(output, path)), bytes);
+  }
 });

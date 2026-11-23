@@ -10,6 +10,23 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
   let hoverTimer;
   let selectionTimer;
   let pointer;
+  let centerFrame;
+
+  function centerPreview() {
+    cancelAnimationFrame(centerFrame);
+    centerFrame = requestAnimationFrame(() => {
+      if (!preview || !element.clientWidth) return;
+      const parts = [...preview.querySelectorAll('.shelf-cover, .shelf-hardware, .shelf-leaves')]
+        .map(part => part.getBoundingClientRect()).filter(bounds => bounds.width > 0);
+      if (!parts.length) return;
+      const left = Math.min(...parts.map(bounds => bounds.left));
+      const right = Math.max(...parts.map(bounds => bounds.right));
+      const viewport = element.getBoundingClientRect();
+      element.scrollLeft += (left + right - viewport.left - viewport.right) / 2;
+    });
+  }
+  const sizeObserver = new ResizeObserver(centerPreview);
+  sizeObserver.observe(element);
 
   function showPreview(link) {
     if (preview === link) return;
@@ -17,6 +34,7 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     link.classList.add('is-preview');
     preview = link;
     previewStarted = performance.now();
+    centerPreview();
   }
 
   function canAnimate() {
@@ -88,6 +106,8 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
       }
     });
     element.append(link);
+    sizeObserver.observe(link);
+    cover.addEventListener('transitionend', centerPreview);
     links.set(book.id, link);
   }
 

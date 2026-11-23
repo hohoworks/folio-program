@@ -1,5 +1,6 @@
 import { validBookColor, mockupViews } from './book-material.js';
 import { resolveMockupDetails } from './mockup-options.js';
+import { normalizeBookFormat, validFaceSize } from './book-format.js';
 export { trimSize, spineRatio } from './book-material.js';
 import { isProjectVideoPath, projectEmbedURL, projectMedia } from './project-media.js';
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
@@ -12,7 +13,7 @@ function asset(value, folder = 'books') {
   if (typeof value !== 'string') return false;
   return assetPath.exec(value)?.[1].toLowerCase() === folder;
 }
-const bindings = ['paperback', 'hardcover', 'saddle-stitch', 'exposed-sewn'];
+const bindings = ['paperback', 'hardcover', 'saddle-stitch', 'exposed-sewn', 'spiral', 'ring'];
 
 function englishFields(source) {
   const en = source?.translations?.en;
@@ -30,19 +31,28 @@ function publishedBook(book) {
   if (!book || book.published === false || typeof book.id !== 'string' || !/^[\w-]+$/.test(book.id)
       || typeof book.title !== 'string' || !book.title.trim()
       || !asset(book.coverImages?.front) || !positive(book.coverRatio) || !positive(book.pageRatio)
-      || !Array.isArray(book.pages) || !book.pages.length || !book.pages.every(page => asset(page?.imageSrc))) {
+      || !Array.isArray(book.pages) || !book.pages.length || !book.pages.every((page, index) =>
+        asset(page?.imageSrc) || (book.bookForm === 'cards' && index % 2 === 1 && page?.blank === true))) {
     return null;
   }
 
-  const joinHalves = book.joinSplitPages === true && book.pages.length % 2 === 0;
+  const joinHalves = book.bookForm !== 'cards' && book.joinSplitPages === true && book.pages.length % 2 === 0;
   const pages = [];
   for (let index = 0; index < book.pages.length; index += joinHalves ? 2 : 1) {
-    const page = { imageSrc: book.pages[index].imageSrc };
+    const src = book.pages[index];
+    const page = src.blank ? { blank: true } : { imageSrc: src.imageSrc };
+    if (!joinHalves && validFaceSize(src.sizeMm)) page.sizeMm = src.sizeMm;
     if (joinHalves) page.rightImageSrc = book.pages[index + 1].imageSrc;
     pages.push(page);
   }
   return {
     type: 'book',
+    ...normalizeBookFormat({ ...book, pages, joinSplitPages: false }),
+    edgeTreatments: Object.fromEntries(Object.entries(book.edgeTreatments || {}).filter(([face, edge]) =>
+      ['fore', 'head', 'tail'].includes(face) && ((edge?.mode === 'solid' && validBookColor(edge.color)) ||
+        (edge?.mode === 'scan' && asset(edge.imageSrc))))),
+    edgeBands: Array.isArray(book.edgeBands) ? book.edgeBands.filter(band => band && Number.isInteger(band.start) && Number.isInteger(band.end) && validBookColor(band.color)) : [],
+    ringPositions: Array.isArray(book.ringPositions) && book.ringPositions.every(n => Number.isFinite(n) && n >= 0 && n <= 100) ? book.ringPositions : undefined,
     translations: englishFields(book),
     id: book.id,
     title: book.title,
@@ -69,7 +79,8 @@ function publishedBook(book) {
     thumbnailSrc: asset(book.thumbnailSrc) ? book.thumbnailSrc : undefined,
     coverImages: {
       front: book.coverImages.front,
-      back: asset(book.coverImages.back) ? book.coverImages.back : undefined,
+      back: asset(book.coverImages.back) ? book.coverImages.back :
+        book.bookForm === 'cards' && pages.length % 2 === 0 ? pages.at(-1)?.imageSrc : undefined,
       spine: asset(book.coverImages.spine) ? book.coverImages.spine : undefined,
     },
     galleryImages: Array.isArray(book.galleryImages)

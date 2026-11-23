@@ -1,6 +1,7 @@
 import { MAX_PROJECT_VIDEO_BYTES, isProjectVideoPath, projectEmbedURL, projectMedia } from '../dist/project-media.js';
 import { STOCK_PROJECT_TAGS, idsFor } from '../dist/project-tags.js';
-import { mockupViews, validBookColor } from '../dist/book-material.js';
+import { mockupViews, trimSize, validBookColor } from '../dist/book-material.js';
+import { validCardStock, validFaceSize, validLeafLayout } from '../dist/book-format.js';
 import { mockupDetailFields, validMockupDetail } from '../dist/mockup-options.js';
 import { DEFAULT_SITE_TITLE, migrateStarterSite } from '../dist/site-title.js';
 
@@ -12,7 +13,7 @@ const maxAssetBytes = 10 * 1024 * 1024;
 const maxPages = 1000;
 // Leave 1,000 files for the viewer, admin bundles, fonts, and other static assets.
 const maxCatalogFiles = 19000;
-const bindingTypes = new Set(['hardcover', 'saddle-stitch', 'exposed-sewn', 'paperback']);
+const bindingTypes = new Set(['hardcover', 'saddle-stitch', 'exposed-sewn', 'paperback', 'spiral', 'ring']);
 const gitSha = /^[a-f0-9]{40}$/;
 const encoder = new TextEncoder();
 
@@ -550,6 +551,7 @@ function references(item) {
   return [
     item.thumbnailSrc,
     ...Object.values(item.coverImages || {}),
+    ...Object.values(item.edgeTreatments || {}).map(edge => edge?.imageSrc),
     ...(item.pages || []).map(page => page.imageSrc),
     ...projectMedia(item).map(entry => entry.type === 'video' ? entry.videoSrc : entry.imageSrc),
     ...(item.galleryImages || []).map(image => image.imageSrc),
@@ -746,6 +748,90 @@ function applyThumbnail(item, existing, assets, addImage, kind) {
   item.thumbnailSrc = addImage(thumbnail, 'thumbnail');
 }
 
+function storeCutEdges(item, data, assets, addImage) {
+  const treatments = data.edgeTreatments;
+  const scans = assets.edgeScans ?? {};
+  const faces = ['head', 'fore', 'tail'];
+  if (!isRecord(scans) || Object.keys(scans).some(key => !faces.includes(key))) {
+    throw new RequestError(400, '재단면 이미지 위치를 확인해주세요.');
+  }
+  if (treatments === undefined && !Object.keys(scans).length) return;
+  if (!isRecord(treatments) || Object.keys(treatments).some(key => !faces.includes(key))) {
+    throw new RequestError(400, '재단면 설정을 확인해주세요.');
+  }
+  const result = {};
+  for (const face of faces) {
+    const edge = treatments[face];
+    if (edge?.mode !== 'scan' && scans[face] !== undefined) throw new RequestError(400, '스캔을 사용할 면을 선택해주세요.');
+    if (edge === undefined || edge?.mode === 'natural') continue;
+    if (edge?.mode === 'solid' && validBookColor(edge.color)) {
+      result[face] = { mode: 'solid', color: edge.color.toLowerCase() };
+      continue;
+    }
+    if (edge?.mode !== 'scan' || ![0, 90, 180, 270].includes(edge.rotation ?? 0)) {
+      throw new RequestError(400, '재단면의 색상이나 스캔 방향을 확인해주세요.');
+    }
+    const crop = edge.crop;
+    if (crop !== undefined && (!isRecord(crop) || !['x','y','width','height'].every(key => Number.isFinite(crop[key])) ||
+        crop.x < 0 || crop.y < 0 || crop.width <= 0 || crop.height <= 0 ||
+        crop.x + crop.width > 100.00001 || crop.y + crop.height > 100.00001)) {
+      throw new RequestError(400, '스캔을 자를 범위를 확인해주세요.');
+    }
+    const imageSrc = scans[face] ? addImage(scans[face], 'edge-' + face) : item.edgeTreatments?.[face]?.imageSrc;
+    if (!imageSrc) throw new RequestError(400, '선택한 재단면의 스캔 이미지를 올려주세요.');
+    result[face] = { mode: 'scan', imageSrc, rotation: edge.rotation ?? 0,
+      ...(crop && { crop: { x: crop.x, y: crop.y, width: crop.width, height: crop.height } }) };
+  }
+  if (Object.keys(result).length) item.edgeTreatments = result;
+  else delete item.edgeTreatments;
+}
+
+function faceSize(entry) {
+  if (entry.sizeMm === undefined) return {};
+  if (!validFaceSize(entry.sizeMm)) throw new RequestError(400, '내지의 실제 크기를 확인해주세요.');
+  return { sizeMm: entry.sizeMm };
+}
+
+function storeCards(cards, existing, prefix, addImage) {
+  if (!Array.isArray(cards) || !cards.length || cards.length > maxPages / 2) {
+    throw new RequestError(400, '카드는 1~500장을 등록할 수 있습니다.');
+  }
+  const saved = new Map((existing?.pages || []).filter(page => page.imageSrc).map(page => [page.imageSrc.replace(/^\.\//, ''), page]));
+  return cards.flatMap((card, index) => ['front', 'back'].map(side => {
+    if (!isRecord(card)) throw new RequestError(400, '카드 앞뒷면을 확인해주세요.');
+    const face = card[side];
+    if (side === 'back' && face == null) return { blank: true };
+    if (!isRecord(face)) throw new RequestError(400, '카드 앞면 이미지를 확인해주세요.');
+    const entry = fileEntry(face, 'image', saved, prefix, addImage, 'card-' + (index + 1) + '-' + side);
+    return { ...entry, ...faceSize(face.sizeMm === undefined && saved.has(entry.imageSrc) ? saved.get(entry.imageSrc) : face) };
+  }));
+}
+
+function storeConstruction(item, data, assets, addImage) {
+  const count = item.pages.length / (item.joinSplitPages ? 2 : 1);
+  for (const key of ['cardStock', 'leafLayout', 'edgeBands', 'ringPositions']) {
+    if (data[key] === null) delete item[key];
+    else if (data[key] !== undefined) item[key] = data[key];
+  }
+  if (item.cardStock !== undefined && !validCardStock(item.cardStock)) throw new RequestError(400, '카드 모서리와 합지 색상을 확인해주세요.');
+  if (item.leafLayout !== undefined && !validLeafLayout(item.leafLayout, Math.ceil(count / 2), trimSize(item), item.pages)) {
+    throw new RequestError(400, '장별 재단 판형과 시작·끝 장을 확인해주세요.');
+  }
+  if (item.edgeBands !== undefined) {
+    if (!Array.isArray(item.edgeBands) || item.edgeBands.length > maxPages || item.edgeBands.some(band => !isRecord(band) ||
+      !Number.isInteger(band.start) || !Number.isInteger(band.end) || band.start < 1 || band.end > count ||
+      band.end < band.start || !validBookColor(band.color))) throw new RequestError(400, '색지의 적용 쪽수와 색상을 확인해주세요.');
+    if (!item.edgeBands.length) delete item.edgeBands;
+    else item.edgeBands = item.edgeBands.map(({ start, end, color }) => ({ start, end, color: color.toLowerCase() }));
+  }
+  if (item.ringPositions !== undefined && (!Array.isArray(item.ringPositions) ||
+    item.ringPositions.length !== (item.mockupDetails?.ringCount ?? mockupDetailFields.ringCount.default) ||
+    item.ringPositions.some(n => !Number.isFinite(n) || n < 0 || n > 100) || new Set(item.ringPositions).size !== item.ringPositions.length)) {
+    throw new RequestError(400, 'O링의 개수와 위치를 확인해주세요.');
+  }
+  storeCutEdges(item, data, assets, addImage);
+}
+
 function buildItem(data, existing, kind, registrationId) {
   const item = metadata(data, existing);
   const slug = item.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 42) || kind;
@@ -784,6 +870,10 @@ function buildItem(data, existing, kind, registrationId) {
   const bindingType = data.bindingType ?? existing?.bindingType ?? 'paperback';
   if (!bindingTypes.has(bindingType)) throw new RequestError(400, '제본 방식을 확인해주세요.');
   item.bindingType = bindingType;
+  if (data.bookForm !== undefined) {
+    if (!['bound', 'cards'].includes(data.bookForm)) throw new RequestError(400, '책의 형태를 확인해주세요.');
+    item.bookForm = data.bookForm;
+  }
   if (data.mockupDetails === null) delete item.mockupDetails;
   else if (data.mockupDetails !== undefined) {
     if (!isRecord(data.mockupDetails)) throw new RequestError(400, '책 목업 설정을 확인해주세요.');
@@ -848,11 +938,22 @@ function buildItem(data, existing, kind, registrationId) {
     if (assets[face] === null && face !== 'front') delete item.coverImages[face];
     else item.coverImages[face] = addImage(assets[face], face);
   }
-  if (!item.coverImages.front) throw new RequestError(400, '앞표지를 업로드해주세요.');
   if (data.joinSplitPages !== undefined && typeof data.joinSplitPages !== 'boolean') {
     throw new RequestError(400, '분리된 내지 복원 설정을 확인해주세요.');
   }
-  if (assets.pages !== undefined || !existing) {
+  if (assets.cards !== undefined) {
+    if (item.bookForm !== 'cards' || assets.pages !== undefined || data.joinSplitPages || data.pdfLayout !== undefined || data.pdfSheetSides !== undefined) {
+      throw new RequestError(400, '카드는 카드 앞뒷면 목록으로 등록해주세요.');
+    }
+    item.pages = storeCards(assets.cards, existing, prefix, addImage);
+    delete item.joinSplitPages;
+    delete item.pdfLayout;
+    delete item.pdfSheetSides;
+    if (!item.coverImages.front || (assets.front === undefined && existing?.coverImages?.front === existing?.pages?.[0]?.imageSrc)) {
+      item.coverImages.front = item.pages[0].imageSrc;
+      item.coverRatio = item.pages[0].ratio ?? item.coverRatio;
+    }
+  } else if (assets.pages !== undefined || !existing) {
     if (!Array.isArray(assets.pages) || !assets.pages.length || assets.pages.length > maxPages) {
       throw new RequestError(400, '내지는 1~1,000쪽까지 등록할 수 있습니다.');
     }
@@ -877,7 +978,7 @@ function buildItem(data, existing, kind, registrationId) {
         item.pdfSheetSides = sides;
       }
     }
-    item.pages = assets.pages.map((file, index) => ({ imageSrc: addImage(file, 'page-' + String(index + 1).padStart(4, '0')) }));
+    item.pages = assets.pages.map((file, index) => ({ imageSrc: addImage(file, 'page-' + String(index + 1).padStart(4, '0')), ...faceSize(file) }));
   } else {
     if (data.pdfSheetSides !== undefined || (data.pdfLayout !== undefined && data.pdfLayout !== existing.pdfLayout)) {
       throw new RequestError(400, 'PDF 구성을 바꾸려면 원본 PDF를 다시 선택해주세요.');
@@ -889,6 +990,9 @@ function buildItem(data, existing, kind, registrationId) {
       item.joinSplitPages = true;
     } else if (data.joinSplitPages === false) delete item.joinSplitPages;
   }
+  if (!item.coverImages.front) throw new RequestError(400, '앞표지를 업로드해주세요.');
+  if (item.bookForm !== 'cards' && item.pages.some(page => page.blank)) throw new RequestError(400, '제본책으로 바꾸려면 내지 PDF를 등록해주세요.');
+  storeConstruction(item, data, assets, addImage);
   if (assets.galleryImages !== undefined) {
     item.galleryImages = imageList(assets.galleryImages === null ? [] : assets.galleryImages,
       existing?.galleryImages || [], prefix, addImage, 'gallery', true);
@@ -1204,7 +1308,7 @@ async function handle(request, env) {
   if (pathname === '/api/delete' && request.method === 'POST') return deleteItem(request, env);
   if (pathname === '/api/order' && request.method === 'POST') return reorderItems(request, env);
   if ((request.method === 'GET' || request.method === 'HEAD') &&
-      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/project-media.js', '/media-order.js', '/image-encoding.js', '/pdf-layout.js', '/mockup-controls.js', '/mockup-preview.js', '/mockup-preview.css'].includes(pathname) || pathname.startsWith('/vendor/'))) {
+      (['/admin.js', '/draft-store.js', '/upload-request.js', '/site-settings.js', '/project-tags.js', '/project-media.js', '/media-order.js', '/image-encoding.js', '/pdf-layout.js', '/mockup-controls.js', '/mockup-preview.js', '/mockup-preview.css', '/book-construction.js', '/card-editor.js'].includes(pathname) || pathname.startsWith('/vendor/'))) {
     return staticAsset(url, request, env, pathname);
   }
   throw new RequestError(404, '요청한 페이지를 찾을 수 없습니다.');

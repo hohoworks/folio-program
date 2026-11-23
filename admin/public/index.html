@@ -65,6 +65,8 @@
           <fieldset id="book-specific">
             <section class="form-section" aria-labelledby="book-heading">
               <h2 id="book-heading">책 정보</h2>
+              <label for="book-form-type">작품 형태</label>
+              <select id="book-form-type"><option value="bound">제본한 책</option><option value="cards">낱장 카드 묶음</option></select>
               <div class="fields two">
                 <div><label for="language">책 본문 언어 · 국문 표기 <span>선택</span></label><input id="language" name="language" type="text" maxlength="60" placeholder="한국어·영어" aria-describedby="book-language-help"></div>
                 <div><label for="language-en">책 본문 언어 · 영문 표기 <span>선택</span></label><input id="language-en" name="language-en" type="text" lang="en" maxlength="60" placeholder="Korean and English" aria-describedby="book-language-help"></div>
@@ -78,10 +80,11 @@
                 <div><label for="trim-height">재단 세로 (mm) <span>선택</span></label><input id="trim-height" name="trim-height" type="number" min="1" step="any" inputmode="decimal"></div>
                 <div><label for="spine-width">책등 두께 (mm) <span>선택</span></label><input id="spine-width" name="spine-width" type="number" min="0.1" step="any" inputmode="decimal"></div>
               </div>
-              <label for="binding-type">제본 방식</label>
+              <fieldset data-bound><label for="binding-type">제본 방식</label>
               <select id="binding-type" name="binding-type" aria-describedby="binding-help">
-                <option value="paperback">무선 제본</option><option value="hardcover">양장</option><option value="saddle-stitch">중철</option><option value="exposed-sewn">노출사철</option>
+                <option value="paperback">무선 제본</option><option value="hardcover">양장</option><option value="saddle-stitch">중철</option><option value="exposed-sewn">노출사철</option><option value="spiral">연속 스프링 · 나선</option><option value="ring">독립 O링</option>
               </select>
+              </fieldset>
               <label for="mockup-view">처음 보이는 각도</label>
               <select id="mockup-view"><option value="spine">앞표지와 책등</option><option value="edge">앞표지와 책배</option><option value="back">뒤표지와 책등</option><option value="front">앞표지 정면</option></select>
               <div class="fields two material-colors">
@@ -89,7 +92,8 @@
                 <div><label for="paper-color">종이 단면색</label><input type="color" id="paper-color" value="#efede4"><label class="check-label"><input id="auto-paper-color" type="checkbox" checked> 기본 종이색</label></div>
               </div>
               <div class="mockup-adjustments">
-                <details id="mockup-details">
+                <div class="construction-controls">
+                <fieldset data-bound><details id="mockup-details">
                   <summary>표지 마감과 제본 세부 설정</summary>
                   <fieldset class="mockup-group">
                     <legend>표지 마감</legend>
@@ -97,6 +101,19 @@
                       <div><label for="corner-radius-mm">모서리 둥글기 (mm)</label><input id="corner-radius-mm" type="number" step="any" inputmode="decimal"></div>
                       <div><label for="cover-gloss">표지 광택 (%)</label><input id="cover-gloss" type="number" step="any" inputmode="decimal" aria-describedby="gloss-help"><p id="gloss-help" class="help">0%는 무광입니다.</p></div>
                     </div>
+                  </fieldset>
+                  <fieldset class="mockup-group" data-bindings="spiral ring" hidden disabled>
+                    <legend>스프링과 링</legend>
+                    <div class="fields two">
+                      <div><label for="ring-count">감은 횟수 또는 링 개수</label><input id="ring-count" type="number" step="1"></div>
+                      <div><label for="ring-diameter-mm">지름 (mm)</label><input id="ring-diameter-mm" type="number" step="any"></div>
+                      <div class="material-colors"><label for="ring-color">철사 색</label><input id="ring-color" type="color"></div>
+                      <div><label for="ring-placement">제본 위치</label><select id="ring-placement"><option value="left">왼쪽</option><option value="right">오른쪽</option><option value="top">위</option><option value="bottom">아래</option></select></div>
+                    </div>
+                    <fieldset data-bindings="ring">
+                      <label for="ring-positions">링별 위치 (%) <span>선택</span></label><input id="ring-positions" placeholder="15, 50, 85" aria-describedby="ring-positions-help">
+                      <p class="help" id="ring-positions-help">빈칸이면 균등하게 놓습니다. 직접 배치할 때는 위에서 아래로, 가로 제본은 왼쪽에서 오른쪽으로 링마다 0~100 사이의 위치를 입력하세요.</p>
+                    </fieldset>
                   </fieldset>
                   <fieldset class="mockup-group" data-bindings="hardcover" hidden disabled>
                     <legend>양장 표지와 책등</legend>
@@ -136,17 +153,31 @@
                     </fieldset>
                     <label for="thread-color">실 색</label><input id="thread-color" type="color" value="#9b8261"><label class="check-label"><input id="auto-thread-color" type="checkbox" checked> 자동</label>
                   </fieldset>
+                </details></fieldset>
+                <details class="construction-section" id="edge-options"><summary>책배·머리·꼬리 단면</summary>
+                  <div id="edge-face-fields"></div>
+                  <fieldset class="mockup-group"><legend>색지 구간</legend>
+                    <p class="help">앞에서부터 쪽 번호로 입력하세요. 기본 종이 단면에서 해당 쪽의 색이 보입니다.</p>
+                    <div id="edge-bands"></div><button class="text-button" type="button" id="add-edge-band">색지 구간 추가 +</button>
+                  </fieldset>
                 </details>
-                <div id="mockup-preview" role="img" aria-label="책 목업 미리보기"></div>
+                <fieldset data-cards hidden disabled class="mockup-group" id="card-stock">
+                  <legend>카드 용지</legend>
+                  <label for="card-corner">네 모서리 둥글기 (mm)</label><input type="number" id="card-corner" min="0" max="100" step="any" value="0">
+                  <p class="help">합지의 각 층 색을 앞면에서 뒷면 순서로 고르세요.</p>
+                  <div id="card-layers"></div><button type="button" class="text-button" id="add-card-layer">합지 층 추가 +</button>
+                </fieldset>
+                </div>
+                <div id="mockup-preview" role="group" aria-label="책 목업 미리보기"></div>
               </div>
             </section>
             <section class="form-section" aria-labelledby="covers-heading">
-              <h2 id="covers-heading">표지</h2>
+              <h2 id="covers-heading">표지</h2><p class="help" data-cards hidden>앞표지를 비워두면 첫 카드 앞면을 사용합니다.</p>
               <div class="file-field"><label for="front">표1 · 앞표지</label><input id="front" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"><p class="help file-state" id="front-state"></p></div>
               <div class="file-field"><label for="back">표4 · 뒤표지 <span>선택</span></label><input id="back" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"><p class="help file-state" id="back-state"></p><label class="check-label" id="back-remove-row" hidden><input id="back-remove" type="checkbox"> 기존 뒤표지 제거</label></div>
               <div class="file-field"><label for="spine">책등 <span>선택</span></label><input id="spine" type="file" accept="image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"><p class="help file-state" id="spine-state"></p><label class="check-label" id="spine-remove-row" hidden><input id="spine-remove" type="checkbox"> 기존 책등 이미지 제거</label><p class="help" id="binding-help"></p></div>
             </section>
-            <section class="form-section" aria-labelledby="pdf-heading">
+            <fieldset data-bound class="form-section" aria-labelledby="pdf-heading">
               <h2 id="pdf-heading">내지</h2>
               <div class="file-field"><label for="interior">PDF 파일</label><input id="interior" type="file" accept="application/pdf,.pdf"><p class="help file-state" id="interior-state"></p></div>
               <label for="page-layout">PDF 페이지 구성</label>
@@ -160,7 +191,33 @@
                 <option value="left">왼쪽(좌수) · 왼쪽에 1쪽부터</option>
               </select>
               <p class="help" id="first-page-side-help">첫 낱장이 놓일 위치를 선택하세요. PDF에서 이미 두 쪽이 한 펼침면으로 묶인 부분은 원래 좌우 배치를 유지합니다.</p>
-            </section>
+              <details class="construction-section" id="leaf-options">
+                <summary>장별 재단 크기</summary>
+                <label for="leaf-source">크기 기준</label><select id="leaf-source"><option value="uniform">모든 장 같은 크기</option><option value="pdf">PDF 원본 크기</option><option value="custom">직접 설정</option></select>
+                <fieldset id="leaf-settings" hidden disabled>
+                  <p class="help">종이 한 장은 앞뒤 두 쪽입니다. 1장부터 순서대로 계산하며, 같은 장에 여러 구간이 겹치면 아래 구간의 입력값을 적용합니다.</p>
+                  <fieldset id="leaf-base-fields" class="fields two">
+                    <label>첫 장 가로 (mm)<input id="leaf-width" type="number" min="0.1" step="any" placeholder="재단 가로"></label>
+                    <label>첫 장 세로 (mm)<input id="leaf-height" type="number" min="0.1" step="any" placeholder="재단 세로"></label>
+                    <label>한 장마다 가로 변화 (mm)<input id="leaf-step-width" type="number" step="any" value="0"></label>
+                    <label>한 장마다 세로 변화 (mm)<input id="leaf-step-height" type="number" step="any" value="0"></label>
+                  </fieldset>
+                  <label for="leaf-align">기본 세로 정렬</label><select id="leaf-align"><option value="top">위쪽</option><option value="center">가운데</option><option value="bottom">아래쪽</option></select>
+                  <div id="leaf-ranges"></div>
+                  <button type="button" class="text-button" id="add-leaf-range">구간 추가 +</button>
+                  <button type="button" class="text-button" id="add-leaf-override">개별 장 추가 +</button>
+                  <div id="leaf-size-preview"><label for="leaf-preview-number">재단 크기 확인 · 장 번호</label><input id="leaf-preview-number" type="number" min="1" max="500" value="1"><output id="leaf-preview-size" for="leaf-preview-number"></output></div>
+                </fieldset>
+              </details>
+            </fieldset>
+            <fieldset data-cards hidden disabled class="form-section" id="card-editor" aria-labelledby="cards-heading">
+              <h2 id="cards-heading">카드 순서와 앞뒷면</h2>
+              <label for="card-images">앞면 이미지 추가 <span>여러 장 선택 가능</span></label><input id="card-images" type="file" multiple accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp">
+              <label for="card-pdf-layout">카드 PDF 구성</label><select id="card-pdf-layout"><option value="pairs">앞면·뒷면을 한 쌍씩</option><option value="fronts">모두 앞면으로</option></select>
+              <label for="card-pdf">PDF에서 카드 추가</label><input id="card-pdf" type="file" accept="application/pdf,.pdf">
+              <p class="help">각 PDF 페이지를 한 면으로 사용합니다. 뒷면 이미지를 비운 카드는 빈 뒷면으로 표시됩니다.</p>
+              <ol class="image-list card-list" id="card-list"></ol><p id="card-notice" class="help" role="status"></p>
+            </fieldset>
             <section class="form-section" aria-labelledby="reader-heading">
               <h2 id="reader-heading">책 읽기</h2>
               <label class="check-label"><input id="page-jump" type="checkbox" checked> 쪽수를 입력해 이동</label>

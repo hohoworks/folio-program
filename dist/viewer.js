@@ -1,6 +1,7 @@
 import { loadCatalog, readerSpreads, trimSize } from './catalog.js';
 import { setBookMaterial, mockupViews } from './book-material.js';
-import { createCurl } from './curl.js';
+import { createCurl, createCardTurn } from './curl.js';
+import { cardFaces, leafGeometry, physicalSpreads } from './book-format.js';
 import { createMobileReader } from './mobile-reader.js';
 import { createShelf } from './shelf.js';
 import { titleLanguage, alignDetailTitle } from './title-language.js';
@@ -21,6 +22,11 @@ const positionDisplay = $('position');
 const jumpForm = $('page-jump');
 const jumpInput = $('page-number');
 const pageError = $('page-error');
+const cardSide = document.createElement('select');
+cardSide.id = 'card-side';
+for (const value of ['front', 'back']) cardSide.add(new Option('', value));
+jumpInput.after(cardSide);
+cardSide.hidden = true;
 const readButton = $('read-book');
 const resumeButton = $('resume-book');
 const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
@@ -89,8 +95,21 @@ function itemCopy(entry) {
   };
 }
 
+function isCards() { return activeBook?.bookForm === 'cards'; }
+
+function cardLabel(face) {
+  const number = Math.ceil(face / 2);
+  return locale === 'en' ? 'Card ' + number + (face % 2 ? ' front' : ' back') : number + '번 카드 ' + (face % 2 ? '앞면' : '뒷면');
+}
+
 function pageLabel(index) {
+  if (isCards()) return cardLabel(Number(index));
   return locale === 'en' ? 'Page ' + index : index + '쪽';
+}
+
+function scanLabel(index) {
+  const blank = pages[index - 1]?.blank;
+  return pageLabel(index) + (blank ? (locale === 'en' ? ', blank' : ', 빈 면') : '');
 }
 
 function pageCount(count) {
@@ -101,6 +120,7 @@ let activeBook;
 let activeRoute;
 let pages = [];
 let spreads = [];
+let geometry;
 let rememberedPage = 0;
 
 let position = 0;
@@ -151,6 +171,7 @@ function preloadSpread(index) {
 }
 
 function scanImages(page) {
+  if (!page?.imageSrc) return [];
   return page.rightImageSrc ? [page.imageSrc, page.rightImageSrc] : [page.imageSrc];
 }
 
@@ -174,7 +195,7 @@ function createPage(index) {
   if (activeBook.coverImages) {
     page.className = 'paper paper-scan';
     page.dataset.page = index;
-    page.setAttribute('aria-label', pageLabel(index));
+    page.setAttribute('aria-label', scanLabel(index));
     if (data.rightImageSrc) page.classList.add('joined-scan');
     for (const src of scanImages(data)) addAssetImage(page, src);
     return page;
@@ -221,20 +242,66 @@ function spreadLabel(index) {
   return left && right ? `${formatPage(left)}–${formatPage(right)}` : formatPage(left || right);
 }
 
+function applyLeafSize(element, leaf) {
+  element.style.setProperty('--leaf-width', (50 * leaf.width / geometry.width) + '%');
+  element.style.setProperty('--leaf-height', (100 * leaf.height / geometry.height) + '%');
+  element.style.setProperty('--leaf-top', (100 * leaf.top / geometry.height) + '%');
+}
+
+function pageStack(side, face) {
+  const first = createPage(face);
+  first.classList.add('paper-' + side);
+  if (!face) return { first, layers: [] };
+  applyLeafSize(first, geometry.leaves[Math.ceil(face / 2) - 1]);
+  const layers = [first];
+  const step = side === 'right' ? 2 : -2;
+  // Every sheet touches the spine. Skip entirely hidden faces, keeping the
+  // actual scans on exposed steps even when leaf widths and heights alternate.
+  const visible = [geometry.leaves[Math.ceil(face / 2) - 1]];
+  for (let next = face + step; next >= 1 && next <= pages.length; next += step) {
+    const leaf = geometry.leaves[Math.ceil(next / 2) - 1];
+    if (visible.some(above => above.width >= leaf.width && above.top <= leaf.top &&
+        above.top + above.height >= leaf.top + leaf.height)) continue;
+    const under = createPage(next);
+    under.classList.add('paper-' + side, 'under-leaf');
+    under.inert = true;
+    under.setAttribute('aria-hidden', 'true');
+    under.removeAttribute('tabindex');
+    applyLeafSize(under, leaf);
+    layers.push(under);
+    visible.push(leaf);
+  }
+  layers.reverse();
+  return { first, layers };
+}
+
 function createSpread(index) {
   const element = document.createElement('div');
   const pair = spreads[index - 1];
-  const left = createPage(pair.left);
-  const right = createPage(pair.right);
+  let left, right;
+  if (isCards()) {
+    left = createPage(pair.left);
+    left.classList.add('card-face');
+    element.append(left);
+  } else if (geometry) {
+    const leftStack = pageStack('left', pair.left);
+    const rightStack = pageStack('right', pair.right);
+    left = leftStack.first;
+    right = rightStack.first;
+    element.append(...leftStack.layers, ...rightStack.layers);
+  } else {
+    left = createPage(pair.left);
+    right = createPage(pair.right);
+    left.classList.add('paper-left');
+    right.classList.add('paper-right');
+    element.append(left, right);
+  }
   element.className = 'spread';
   element.tabIndex = -1;
   element.setAttribute('role', 'group');
   element.dataset.first = pair.left || pair.right;
   element.dataset.spreadIndex = index;
   element.setAttribute('aria-label', pageLabel(spreadLabel(index)));
-  left.classList.add('paper-left');
-  right.classList.add('paper-right');
-  element.append(left, right);
   return { element, left, right };
 }
 
@@ -254,7 +321,7 @@ function clearTurn() {
 }
 
 function canPan(direction) {
-  if (!mobile.active || position === 0) return false;
+  if (isCards() || !mobile.active || position === 0) return false;
   const pair = spreads[position - 1];
   return Boolean(pair.left && pair.right) && (direction === 1 ? mobile.pageSide === 'left' : mobile.pageSide === 'right');
 }
@@ -274,9 +341,11 @@ function readBookmark(book) {
   if (book.resumeReadingEnabled === false) return 0;
   try {
     const saved = JSON.parse(localStorage.getItem(bookmarkKey(book)));
-    const leaf = book.pages[saved?.page - 1];
-    if (Number.isInteger(saved?.page) && leaf && saved.total === book.pages.length &&
-        saved.image === leaf.imageSrc && saved.rightImage === leaf.rightImageSrc) return saved.page;
+    const leaf = pages[saved?.page - 1];
+    if (Number.isInteger(saved?.page) && leaf && saved.total === pages.length &&
+        (saved.form ?? 'bound') === (book.bookForm ?? 'bound') &&
+        saved.image === leaf.imageSrc && saved.rightImage === leaf.rightImageSrc &&
+        (book.bookForm !== 'cards' || saved.cardFront === pages[2 * Math.floor((saved.page - 1) / 2)]?.imageSrc)) return saved.page;
   } catch { /* Reading works when storage is unavailable. */ }
   return 0;
 }
@@ -289,7 +358,8 @@ function rememberLeaf() {
   const leaf = pages[page - 1];
   try {
     localStorage.setItem(bookmarkKey(activeBook), JSON.stringify({
-      page, total: pages.length, image: leaf.imageSrc, rightImage: leaf.rightImageSrc,
+      page, total: pages.length, image: leaf.imageSrc, rightImage: leaf.rightImageSrc, form: activeBook.bookForm ?? 'bound',
+      ...(isCards() && { cardFront: pages[2 * Math.floor((page - 1) / 2)].imageSrc }),
     }));
   } catch { /* Keep the reading position for this visit. */ }
 }
@@ -298,22 +368,34 @@ function updateNavigation() {
   if (!activeBook) return;
   const cover = position === 0;
   const firstPage = position === 1 && !canPan(-1);
+  const cards = isCards();
   previousButton.hidden = cover;
   previousButton.textContent = firstPage ? '← ' + t('cover') : t('previous');
-  previousButton.setAttribute('aria-label', firstPage ? t('backCover') : t(mobile.active ? 'previousPage' : 'previousSpread'));
+  previousButton.setAttribute('aria-label', firstPage ? t('backCover') : cards ? (locale === 'en' ? 'Previous card face' : '이전 카드 면') : t(mobile.active ? 'previousPage' : 'previousSpread'));
   nextButton.disabled = !cover && !canPan(1) && targetFor(1) > spreads.length;
   nextButton.textContent = t('next');
-  nextButton.setAttribute('aria-label', t(mobile.active ? 'nextPage' : 'nextSpread'));
+  nextButton.setAttribute('aria-label', cards ? (locale === 'en' ? 'Next card face' : '다음 카드 면') : t(mobile.active ? 'nextPage' : 'nextSpread'));
   let label = t('cover');
-  if (!cover) label = mobile.active ? formatPage(spreads[position - 1][mobile.pageSide]) : spreadLabel(position);
+  if (!cover) label = cards ? cardLabel(position) : mobile.active ? formatPage(spreads[position - 1][mobile.pageSide]) : spreadLabel(position);
   positionDisplay.firstElementChild.textContent = label;
   const editable = !cover && activeBook.pageJumpEnabled !== false;
   positionDisplay.classList.toggle('sr-only', editable);
   jumpForm.hidden = !editable;
-  if (editable && document.activeElement !== jumpInput) jumpInput.value = formatPage(spreads[position - 1][mobile.pageSide]);
+  cardSide.hidden = !cards;
+  const total = cards ? pages.length / 2 : pages.length;
+  positionDisplay.lastElementChild.textContent = '/ ' + total;
+  $('page-total').textContent = '/ ' + total;
+  jumpInput.labels[0].textContent = cards ? (locale === 'en' ? 'Card number' : '이동할 카드 번호') : t('pageNumber');
+  if (cards) {
+    cardSide.setAttribute('aria-label', locale === 'en' ? 'Card face' : '카드 면');
+    cardSide.options[0].textContent = locale === 'en' ? 'Front' : '앞면';
+    cardSide.options[1].textContent = locale === 'en' ? 'Back' : '뒷면';
+    if (!cover) cardSide.value = position % 2 ? 'front' : 'back';
+  }
+  if (editable && document.activeElement !== jumpInput) jumpInput.value = cards ? String(Math.ceil(position / 2)) : formatPage(spreads[position - 1][mobile.pageSide]);
   if (cover) {
     resumeButton.hidden = rememberedPage < 2;
-    resumeButton.textContent = locale === 'en' ? 'Resume at page ' + rememberedPage : rememberedPage + '쪽부터 이어 읽기';
+    resumeButton.textContent = cards ? (locale === 'en' ? 'Resume at ' + cardLabel(rememberedPage) : cardLabel(rememberedPage) + '부터 이어 읽기') : locale === 'en' ? 'Resume at page ' + rememberedPage : rememberedPage + '쪽부터 이어 읽기';
     readButton.firstChild.textContent = t(resumeButton.hidden ? 'read' : 'startOver') + ' ';
   }
   $('turn-prev').hidden = cover;
@@ -364,7 +446,7 @@ function goTo(index, { focus = false, side } = {}) {
   }
   mobile.move(arrivingSide, { animate: false });
   rememberLeaf();
-  if (side) jumpInput.value = formatPage(spreads[index - 1][side]);
+  if (side) jumpInput.value = isCards() ? String(Math.ceil(index / 2)) : formatPage(spreads[index - 1][side]);
   updateNavigation();
   if (focusPage || (cover && active === previousButton) || (nextButton.disabled && active === nextButton)) {
     (cover ? orbit : spread.element).focus({ preventScroll: true });
@@ -384,6 +466,17 @@ function startTurn(index, corner = .86, opening = false) {
   const cover = opening || index === 0;
   const preview = cover ? null : createSpread(index);
   const focus = container.contains(document.activeElement);
+  if (isCards()) {
+    const curl = createCardTurn(spread.left, preview?.left, container, {
+      direction: forward ? 1 : -1,
+      flip: Math.ceil(index / 2) === Math.ceil(position / 2),
+    });
+    const covered = [spread.left];
+    spread.left.style.opacity = '0';
+    turn = { index, forward, opening, covered, curl, corner, progress: 0, offsetY: 0, focus };
+    stage.dataset.turning = '';
+    return turn;
+  }
   const lower = forward ? spread : preview;
   const higher = forward ? preview : spread;
   const front = cover ? coverLeaf() : lower.right;
@@ -396,7 +489,9 @@ function startTurn(index, corner = .86, opening = false) {
     container.prepend(preview.element);
   }
   for (const page of covered) page.style.opacity = '0';
-  const curl = createCurl(front, back, container, { cover });
+  const turningFace = spreads[(forward ? position : index) - 1]?.right;
+  const physicalLeaf = geometry?.leaves[Math.ceil(turningFace / 2) - 1];
+  const curl = createCurl(front, back, container, { cover, physicalLeaf, geometry });
   turn = { index, forward, opening, preview, covered, curl, corner, progress: 0, offsetY: 0, focus };
   stage.dataset.turning = '';
   return turn;
@@ -405,7 +500,7 @@ function startTurn(index, corner = .86, opening = false) {
 function drawTurn(current, progress, offsetY = current.offsetY) {
   current.progress = progress;
   current.offsetY = offsetY;
-  current.curl.draw(current.forward ? progress : 1 - progress, current.corner, offsetY);
+  current.curl.draw(isCards() || current.forward ? progress : 1 - progress, current.corner, offsetY);
 }
 
 function easeInOut(progress) {
@@ -415,7 +510,7 @@ function easeInOut(progress) {
 function settleTurn(current, commit) {
   const from = current.progress;
   const to = commit ? 1 : 0;
-  const arrivingSide = commit && mobile.active && !current.opening && current.index > 0
+  const arrivingSide = commit && !isCards() && mobile.active && !current.opening && current.index > 0
     ? firstVisibleSide(current.index, current.forward)
     : null;
   const duration = (current.opening ? 800 : 640) * Math.max(arrivingSide ? .57 : .37, Math.abs(to - from));
@@ -445,7 +540,7 @@ function settleTurn(current, commit) {
 
 function openBook(index) {
   goTo(index, { focus: true });
-  if (reducedMotion.matches) return;
+  if (reducedMotion.matches || isCards() || geometry) return;
   const current = startTurn(index, .82, true);
   drawTurn(current, 0);
   settleTurn(current, true);
@@ -466,7 +561,7 @@ function step(direction) {
   if (index < 0 || index > spreads.length) return;
   if (position === 0) {
     openBook(index);
-  } else if (reducedMotion.matches) {
+  } else if (reducedMotion.matches || ((isCards() || geometry) && index === 0)) {
     goTo(index);
   } else {
     const current = startTurn(index);
@@ -493,15 +588,17 @@ jumpForm.addEventListener('submit', event => {
   if (jumpForm.hidden) return;
   const value = jumpInput.value.trim().replace(/[０-９]/g, digit => String(digit.charCodeAt(0) - 0xFF10));
   const page = Number(value);
-  if (!/^\d+$/.test(value) || page < 1 || page > pages.length) {
+  const total = isCards() ? pages.length / 2 : pages.length;
+  if (!/^\d+$/.test(value) || page < 1 || page > total) {
     pageError.textContent = locale === 'en' ? 'Enter a page from 1 to ' + pages.length + '.' : '1부터 ' + pages.length + ' 사이의 쪽수를 입력하세요.';
+    if (isCards()) pageError.textContent = locale === 'en' ? 'Enter a card number from 1 to ' + total + '.' : '1부터 ' + total + ' 사이의 카드 번호를 입력하세요.';
     jumpInput.setAttribute('aria-invalid', 'true');
     jumpInput.setAttribute('aria-describedby', 'page-total page-error');
     jumpInput.focus();
     jumpInput.select();
     return;
   }
-  jumpToPage(page);
+  jumpToPage(isCards() ? 2 * page - (cardSide.value === 'front' ? 1 : 0) : page);
 });
 jumpInput.addEventListener('focus', () => jumpInput.select());
 jumpInput.addEventListener('input', clearJumpError);
@@ -591,13 +688,13 @@ pageArea.addEventListener('pointerdown', (event) => {
   if (turn || gesture || mobile.moving || !event.isPrimary || event.button !== 0) return;
   const box = pageArea.getBoundingClientRect();
   const edge = event.target.closest('.drag-zone');
-  if (event.pointerType === 'mouse' && !edge && !mobile.active) return;
+  if (event.pointerType === 'mouse' && !edge && !mobile.active && !isCards() && !geometry) return;
   const direction = edge && !mobile.active ? Number(edge.dataset.direction) : 0;
   gesture = {
     id: event.pointerId,
     x: event.clientX,
     y: event.clientY,
-    width: box.width / 2,
+    width: isCards() ? box.width : box.width / 2,
     corner: Math.min(1, Math.max(0, (event.clientY - box.top) / box.height)),
     direction,
     started: performance.now(),
@@ -615,7 +712,7 @@ pageArea.addEventListener('pointermove', (event) => {
   }
   if (canPan(gesture.direction)) return;
   const index = targetFor(gesture.direction);
-  if (index < 0 || index > spreads.length || reducedMotion.matches) return;
+  if (index < 0 || index > spreads.length || reducedMotion.matches || (index === 0 && (geometry || isCards()))) return;
   const pull = -dx * gesture.direction;
   if (!turn && pull < 2) return;
   if (!turn) startTurn(index, gesture.corner);
@@ -642,7 +739,7 @@ pageArea.addEventListener('lostpointercapture', (event) => endGesture(event, tru
 
 document.addEventListener('keydown', (event) => {
   if (!activeBook || event.defaultPrevented) return;
-  if (event.target === jumpInput) return;
+  if (event.target === jumpInput || event.target === cardSide) return;
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
     event.preventDefault();
@@ -1209,7 +1306,9 @@ function updateBookText(book) {
     appendText(metadata, 'span', 'work-category', content.category).lang = titleLanguage(content.category);
     metadata.append(', ');
   }
-  metadata.append([pageCount(book.pages.length), language].filter(Boolean).join(', '));
+  const count = Math.ceil(book.pages.length / 2);
+  const extent = book.bookForm === 'cards' ? (locale === 'en' ? count + (count === 1 ? ' card' : ' cards') : '카드 ' + count + '장') : pageCount(book.pages.length);
+  metadata.append([extent, language].filter(Boolean).join(', '));
   description.textContent = book.coverImages ? content.description.join('\n\n') : content.description[0];
   description.lang = titleLanguage(description.textContent);
   orbit.setAttribute('aria-label', content.title + ' ' + t('coverView'));
@@ -1268,7 +1367,7 @@ function refreshLocale() {
   if (activeRoute && route.page === 'project') renderProjectIndex();
   if (route.page === 'detail') updateProjectText(route.entry);
   if (activeBook) updateBookText(activeBook);
-  for (const page of container.querySelectorAll('[data-page]')) page.setAttribute('aria-label', pageLabel(page.dataset.page));
+  for (const page of container.querySelectorAll('[data-page]')) page.setAttribute('aria-label', scanLabel(page.dataset.page));
   for (const spread of container.querySelectorAll('[data-spread-index]')) spread.setAttribute('aria-label', pageLabel(spreadLabel(Number(spread.dataset.spreadIndex))));
   updateNavigation();
   updateDocumentTitle();
@@ -1304,8 +1403,14 @@ function routeFromHash() {
 }
 
 function showBook(book, moveFocus) {
-  pages = book.pages;
-  spreads = readerSpreads(book);
+  const cards = book.bookForm === 'cards';
+  pages = cards ? cardFaces(book.pages) : book.pages;
+  geometry = !cards && book.leafLayout ? leafGeometry(book.leafLayout, Math.ceil(pages.length / 2), trimSize(book), pages) : undefined;
+  if (cards) spreads = pages.map((_, index) => ({ left: index + 1, right: 0 }));
+  else spreads = geometry ? physicalSpreads(pages.length) : readerSpreads(book);
+  stage.dataset.readerForm = cards ? 'cards' : 'bound';
+  viewer.dataset.readerForm = stage.dataset.readerForm;
+  stage.toggleAttribute('data-leaf-layout', !!geometry);
   rememberedPage = readBookmark(book);
   mobile.reset();
   updateBookText(book);
@@ -1315,7 +1420,11 @@ function showBook(book, moveFocus) {
   stage.toggleAttribute('data-proportional', !!book.coverRatio);
   stage.toggleAttribute('data-uploaded', !!book.coverImages);
   stage.style.setProperty('--book-ratio', book.trimSizeMm ? book.trimSizeMm[0] / book.trimSizeMm[1] : book.coverRatio ?? '');
-  stage.style.setProperty('--spread-ratio', book.pageRatio ? 2 * book.pageRatio : '');
+  const [width, height] = trimSize(book);
+  const radius = Math.min(book.cardStock?.cornerRadiusMm ?? 0, width / 2, height / 2);
+  stage.style.setProperty('--card-radius', (100 * radius / width) + '% / ' + (100 * radius / height) + '%');
+  const ratio = cards ? width / height : geometry ? 2 * geometry.width / geometry.height : book.pageRatio ? 2 * book.pageRatio : '';
+  stage.style.setProperty('--spread-ratio', ratio);
   const front = model.querySelector('.front');
   addCoverArt(front, book);
   const back = model.querySelector('.back');
@@ -1344,8 +1453,6 @@ function showBook(book, moveFocus) {
   const angle = mockupViews[book.mockupView] ?? initialRotation;
   setRotation(angle.x, angle.y);
   requestAnimationFrame(() => model.classList.remove('resetting'));
-  positionDisplay.lastElementChild.textContent = `/ ${pages.length}`;
-  $('page-total').textContent = '/ ' + pages.length;
   updateNavigation();
   if (moveFocus) heading.focus({ preventScroll: true });
 }

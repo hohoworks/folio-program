@@ -101,3 +101,56 @@
     transition: none;
   }
 }
+
+.stage[data-reader-form="cards"] .spread::after,
+.stage[data-leaf-layout] .spread::after,
+.stage[data-reader-form="cards"] .drag-zone::after,
+.stage[data-leaf-layout] .drag-zone::after { display: none; }
+
+.card-face, .card-turn, .card-turn-sheet, .card-turn-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.card-face, .card-turn :is(.curl-front, .curl-back) {
+  border-radius: var(--card-radius);
+}
+.card-turn, .card-turn-sheet { transform-style: preserve-3d; }
+.card-turn { pointer-events: none; z-index: 3; }
+.card-turn .card-face { filter: drop-shadow(0 2px 3px #2222); }
+.stage[data-reader-form="cards"] .current-page { perspective: 1500px; }
+.stage[data-reader-form="cards"] .page-area { cursor: grab; }
+.stage[data-reader-form="cards"][data-turning] .page-area { cursor: grabbing; }
+#card-side {
+  max-width: 5em;
+  padding: 1px 2px;
+  border: 1px solid #777;
+  color: inherit;
+  background: var(--canvas);
+  font: inherit;
+}
+#book-viewer[data-reader-form="cards"] .page-navigation { width: min(100%, 460px); }
+.stage[data-leaf-layout] .spread > .paper {
+  inset-block: var(--leaf-top) auto;
+  height: var(--leaf-height);
+  width: var(--leaf-width);
+  box-shadow: 0 0 2px #28252255;
+}
+.stage[data-leaf-layout] .spread > .paper-left { left: auto; right: 50%; }
+.stage[data-leaf-layout] .spread > .paper-right { left: 50%; }
+.under-leaf { pointer-events: none; }
+
+@media (max-width: 680px) {
+  .stage[data-reader-form="cards"] .reader-window {
+    width: min(100%, 520px, calc(100cqh * var(--spread-ratio)));
+    clip-path: none;
+  }
+  .stage[data-reader-form="cards"] .reader-window .page-area {
+    width: 100%;
+    transform: none;
+    transition: none;
+  }
+  #book-viewer[data-reader-form="cards"] .page-navigation { width: 100%; }
+  #card-side { height: 44px; font-size: 16px; }
+}

@@ -7,7 +7,11 @@ import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { encodeWebImage, encodeThumbnail, imageTargetBytes } from './image-encoding.js';
 import { bindMediaOrder } from './media-order.js';
 import { MAX_PROJECT_VIDEO_BYTES, projectEmbedURL, projectVideoPlayer } from './project-media.js';
-import { planPdfPages, remainingPdfPages, sidesByShape } from './pdf-layout.js';
+import { planPdfPages, remainingPdfPages, sidesByShape, pdfFaceSize } from './pdf-layout.js';
+
+import { createConstructionEditor, cutFaces, materialPayload, resolvedLeafLayout } from './book-construction.js';
+import { createCardEditor, cardsFromPages } from './card-editor.js';
+import { trimSize } from './vendor/mockup/book-material.js';
 
 const $ = selector => document.querySelector(selector);
 const form = $('#book-form');
@@ -17,17 +21,20 @@ const progress = $('#upload-progress');
 const status = $('#form-status');
 const error = $('#form-error');
 const notice = $('#draft-notice');
-const metadataFields = ['title', 'description', 'category', 'title-en', 'description-en', 'category-en', 'year', 'language', 'language-en', 'trim-width', 'trim-height', 'spine-width', 'binding-type', 'page-layout', 'first-page-side', 'mockup-view', 'case-color', 'paper-color'];
+const metadataFields = ['book-form-type', 'title', 'description', 'category', 'title-en', 'description-en', 'category-en', 'year', 'language', 'language-en', 'trim-width', 'trim-height', 'spine-width', 'binding-type', 'page-layout', 'first-page-side', 'mockup-view', 'case-color', 'paper-color'];
 const checkboxFields = ['published', 'back-remove', 'spine-remove', 'join-split', 'auto-case-color', 'auto-paper-color', 'page-jump', 'resume-reading'];
 const metadataDefaults = {
-  'binding-type': 'paperback', 'page-layout': 'auto', published: true,
+  'book-form-type': 'bound', 'binding-type': 'paperback', 'page-layout': 'auto', published: true,
   'mockup-view': 'spine', 'case-color': '#b3a897', 'paper-color': '#efede4',
   'auto-case-color': true, 'auto-paper-color': true, 'page-jump': true, 'resume-reading': true,
 };
 const renderMockup = createMockupPreview($('#mockup-preview'));
 const mockupPanel = $('#mockup-details');
 const mockupControls = createMockupControls(mockupPanel);
+const construction = createConstructionEditor();
 let previewPageCount;
+let previewFaceSizes;
+let cardCoverPreview;
 const imageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const maxProjectMedia = 1000;
 const imageAccept = 'image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp';
@@ -35,7 +42,7 @@ const videoAccept = 'video/mp4,video/webm,.mp4,.webm';
 const mediaNames = { image: '이미지', video: '영상', embed: '영상·웹 링크' };
 const pdfLayoutLabels = { single: '낱장', spread: '펼침면', mixed: '낱장·펼침면 혼합' };
 const pdfRoot = '/vendor/pdfjs/';
-const fileLabels = { front: '앞표지', back: '뒤표지', spine: '책등', interior: '내지 PDF' };
+const fileLabels = { ...Object.fromEntries(Object.entries(cutFaces).map(([face, name]) => ['edge-' + face, name + ' 단면'])), front: '앞표지', back: '뒤표지', spine: '책등', interior: '내지 PDF' };
 let pdfLibrary;
 let state;
 let catalog = [];
@@ -56,6 +63,18 @@ let siteEditor;
 let projectTags = STOCK_PROJECT_TAGS;
 let tagsLoaded = false;
 let lastCommittedSite;
+
+const cardEditor = createCardEditor({
+  getState: () => state, localFile: key => fileMemory.get(key), setFile, checkImage: file => checkGalleryFile(file, 'image'),
+  trackTask: trackFileTask, previewPath, loadPDF, renderPDFPage, uploadFileAsset, persist, onProgress: changeProgress,
+  uploadBlob: (blob, signal) => uploadAsset(blob, signal, waitingMessage),
+  onPreview: updateMockup,
+  changed() {
+    state.registrationId = crypto.randomUUID();
+    updateView();
+    persist();
+  },
+});
 
 // Keep title brackets an explicit editorial choice, including when wrapping selected text.
 for (const field of document.querySelectorAll('.language-fields textarea, .language-fields input[type="text"]')) {
@@ -109,6 +128,7 @@ function emptyDraft() {
     metadata: { ...metadataDefaults },
     files: {},
     images: [],
+    cards: [],
     galleryImages: [],
     galleryDirty: false,
     tagIds: null,
@@ -136,6 +156,7 @@ function readMetadata() {
   for (const id of metadataFields) state.metadata[id] = $('#' + id).value;
   for (const id of checkboxFields) state.metadata[id] = $('#' + id).checked;
   state.metadata.mockupDetails = mockupControls.read();
+  state.metadata.construction = construction.read();
   state.kind = $('#kind').value;
   if (tagsLoaded) state.tagIds = [...$('#work-tags').querySelectorAll('input:checked')].map(input => input.value);
 }
@@ -144,6 +165,8 @@ function writeMetadata() {
   for (const id of metadataFields) $('#' + id).value = state.metadata[id] ?? '';
   for (const id of checkboxFields) $('#' + id).checked = Boolean(state.metadata[id]);
   mockupControls.write(state.metadata.mockupDetails);
+  construction.write(state.metadata.construction);
+  cardEditor.render();
   $('#kind').value = state.kind;
   renderWorkTags();
 }
@@ -167,6 +190,11 @@ function renderWorkTags() {
 function bookPreferences(item) {
   return {
     mockupDetails: item?.mockupDetails,
+    'book-form-type': item?.bookForm || 'bound',
+    construction: item && {
+      edgeTreatments: item.edgeTreatments, edgeBands: item.edgeBands, ringPositions: item.ringPositions,
+      leafLayout: item.leafLayout, cardStock: item.cardStock,
+    } || undefined,
     'mockup-view': item?.mockupView ?? 'spine',
     'case-color': item?.caseColor ?? metadataDefaults['case-color'],
     'paper-color': item?.paperColor ?? metadataDefaults['paper-color'],
@@ -184,18 +212,43 @@ function updateMockup() {
     if (!meta[name + '-remove']) coverImages[name] = fileMemory.get(name) ??
       (!state.files[name] && saved ? previewPath(saved) : undefined);
   }
+  const cards = meta['book-form-type'] === 'cards';
+  const autoCover = !state.files.front && state.item?.bookForm === 'cards' && state.item.coverImages?.front === state.item.pages?.[0]?.imageSrc;
+  if (cards && (autoCover || !coverImages.front)) coverImages.front = cardEditor.coverPreview('front');
+  if (cards && !coverImages.back) coverImages.back = cardEditor.coverPreview('back');
+  if (cards && cardCoverPreview !== (coverImages.front || null)) {
+    cardCoverPreview = coverImages.front || null;
+    showPreview($('#cover-preview'), cardCoverPreview, '첫 카드 앞면 또는 앞표지를 선택해주세요.');
+  }
+  if (!cards) cardCoverPreview = undefined;
   const width = Number(meta['trim-width']), height = Number(meta['trim-height']);
   const count = state.item?.pages?.length || 0;
-  renderMockup({
+  const pageCount = cards ? state.cards.length * 2 : state.files.interior ? previewPageCount ?? 0 : meta['join-split'] ? Math.ceil(count / 2) : count;
+  const options = meta.construction || {};
+  const edgeTreatments = {};
+  for (const [face, edge] of Object.entries(options.edgeTreatments || {})) {
+    if (edge.mode !== 'scan') { edgeTreatments[face] = edge; continue; }
+    const key = 'edge-' + face;
+    const current = state.item?.edgeTreatments?.[face]?.imageSrc;
+    edgeTreatments[face] = { ...edge, imageSrc: fileMemory.get(key) || (!state.files[key] && current ? previewPath(current) : '') };
+  }
+  const positions = options.ringPositions;
+  const pages = state.files.interior ? previewFaceSizes || state.pdf?.pages : state.item?.pages;
+  const book = {
     title: meta.title || '', coverImages, bindingType: meta['binding-type'], mockupView: meta['mockup-view'],
-    mockupDetails: meta.mockupDetails,
+    bookForm: cards ? 'cards' : 'bound', cardStock: cards ? options.cardStock : undefined,
+    ringPositions: typeof positions === 'string' && positions.trim() ? positions.trim().split(/[\s,]+/).map(Number) : Array.isArray(positions) ? positions : undefined,
+    edgeBands: options.edgeBands, edgeTreatments, leafLayout: cards ? undefined : options.leafLayout,
+    mockupDetails: meta.mockupDetails, pages: pages || [], pageCount,
     trimSizeMm: width > 0 && height > 0 ? [width, height] : undefined,
     coverRatio: state.uploads.front?.ratio ?? state.item?.coverRatio,
     spineWidthMm: Number(meta['spine-width']) > 0 ? Number(meta['spine-width']) : undefined,
-    pageCount: state.files.interior ? previewPageCount ?? 0 : meta['join-split'] ? Math.ceil(count / 2) : count,
     caseColor: meta['auto-case-color'] ? null : meta['case-color'],
     paperColor: meta['auto-paper-color'] ? null : meta['paper-color'],
-  });
+  };
+  book.leafLayout = resolvedLeafLayout(book.leafLayout, trimSize(book));
+  construction.renderLeafPreview(book.leafLayout, Math.ceil(pageCount / 2), trimSize(book), book.pages);
+  renderMockup(book);
 }
 
 function updateView() {
@@ -215,13 +268,18 @@ function updateView() {
   $('#book-previews').hidden = !isBook;
   $('#case-color').disabled = state.metadata['auto-case-color'];
   $('#paper-color').disabled = state.metadata['auto-paper-color'];
-  mockupControls.update(state.metadata['binding-type']);
+  const cards = state.metadata['book-form-type'] === 'cards';
+  construction.update(cards);
+  $('#card-editor').disabled = !cards || pendingFiles.size > 0;
+  $('#book-form-type').disabled = pendingFiles.size > 0;
+  mockupControls.update(cards ? '' : state.metadata['binding-type']);
   updateMockup();
   $('#kind').disabled = Boolean(state.item) || pendingFiles.size > 0;
   $('#editor-heading').textContent = state.item ? '작업 수정' : '작업 추가';
   $('#back-remove-row').hidden = !state.item?.coverImages?.back;
   $('#spine-remove-row').hidden = !state.item?.coverImages?.spine;
-  $('#preview-binding').textContent = ' · ' + $('#binding-type').selectedOptions[0].textContent;
+  $('#preview-binding').textContent = ' · ' + (cards ? '낱장 카드' : $('#binding-type').selectedOptions[0].textContent);
+  $('#pdf-preview-stage').closest('figure').hidden = cards;
   const bindingHelp = {
     'saddle-stitch': '중철은 접힌 부분이 얇게 표시됩니다. 책등 이미지는 선택 사항입니다.',
     'exposed-sewn': '책등 이미지를 비워두면 노출된 실과 종이 결이 표시됩니다.',
@@ -263,7 +321,7 @@ function showPreview(image, source, placeholderText) {
 function updateFileState(key) {
   const element = $('#' + key + '-state');
   const descriptor = state.files[key];
-  const existing = key === 'interior' ? state.item?.pages?.length : state.item?.coverImages?.[key];
+  const existing = key.startsWith('edge-') ? state.item?.edgeTreatments?.[key.slice(5)]?.imageSrc : key === 'interior' ? state.item?.pages?.length : state.item?.coverImages?.[key];
   if (descriptor) {
     const available = fileMemory.has(key);
     element.textContent = descriptor.name + (available ? ' · 선택됨' : ' · 같은 파일을 다시 선택해주세요.');
@@ -330,14 +388,19 @@ for (const key of Object.keys(fileLabels)) {
     const file = $('#' + key).files[0];
     if (!file) return;
     error.textContent = '';
-    trackFileTask(setFile(key, file).then(() => updateBookPreviews()));
+    trackFileTask((async () => {
+      if (key.startsWith('edge-')) checkGalleryFile(file, 'image');
+      await setFile(key, file);
+      if (key.startsWith('edge-')) updateMockup();
+      else await updateBookPreviews();
+    })());
   });
 }
 
 form.addEventListener('input', event => {
   if (event.target.type === 'file' || event.target.closest('#project-specific')) return;
   readMetadata();
-  if (mockupPanel.contains(event.target) || ['title', 'trim-width', 'trim-height', 'spine-width', 'case-color', 'paper-color'].includes(event.target.id)) updateMockup();
+  if (event.target.closest('#edge-options, #leaf-options, #card-stock') || mockupPanel.contains(event.target) || ['title', 'trim-width', 'trim-height', 'spine-width', 'case-color', 'paper-color'].includes(event.target.id)) updateMockup();
   if (event.target.name === 'tagIds') state.tagsTouched = true;
   state.registrationId = crypto.randomUUID();
   clearTimeout(saveTimer);
@@ -352,10 +415,20 @@ form.addEventListener('change', event => {
     renderWorkTags();
   }
   if (event.target.id === 'page-layout') state.pdf = null;
+  if (event.target.id === 'binding-type' && ['spiral', 'ring'].includes(event.target.value)) mockupPanel.open = true;
+  if (event.target.id === 'book-form-type') {
+    if (state.metadata['book-form-type'] === 'cards' && state.item?.bookForm !== 'cards' &&
+        !state.cardsInitialized && !state.files.interior && !state.item?.joinSplitPages) {
+      state.cards = cardsFromPages(state.item?.pages);
+    }
+    state.cardsInitialized = true;
+    cardEditor.render();
+  }
+  state.registrationId = crypto.randomUUID();
   updateView();
   persist();
   if (event.target.id === 'kind') renderProjectImages();
-  if (['page-layout', 'kind', 'join-split', 'trim-width', 'trim-height'].includes(event.target.id)) updateBookPreviews();
+  if (['page-layout', 'kind', 'join-split', 'trim-width', 'trim-height', 'leaf-source', 'book-form-type'].includes(event.target.id)) updateBookPreviews();
 });
 function createCanvas(width, height) {
   const canvas = document.createElement('canvas');
@@ -458,7 +531,13 @@ function referencePageRatio(coverRatio) {
 
 async function updateBookPreviews() {
   const version = ++previewVersion;
+  if (state.metadata['book-form-type'] === 'cards') {
+    cardCoverPreview = undefined;
+    updateMockup();
+    return;
+  }
   previewPageCount = undefined;
+  previewFaceSizes = undefined;
   const cover = $('#cover-preview');
   const pdfImage = $('#pdf-preview');
   const count = $('#preview-page-count');
@@ -498,11 +577,12 @@ async function updateBookPreviews() {
     const ratio = referencePageRatio(coverRatio);
     const plan = await planPdfPages(pdf, mode, ratio, () => {
       if (version !== previewVersion) throw new Error('미리보기가 변경되었습니다.');
-    });
+    }, state.metadata.construction?.leafLayout?.source === 'pdf');
     const page = await pdf.getPage(1);
     const { blob } = await renderPDFPage(page, plan.sheets[0], 0, 480);
     if (version === previewVersion) {
       previewPageCount = plan.total;
+      previewFaceSizes = plan.faceSizes?.map(sizeMm => ({ sizeMm }));
       updateMockup();
       showPreview(pdfImage, blob);
       count.textContent = ' · ' + pdfLayoutLabels[plan.layout] + ' · PDF ' + pdf.numPages + '페이지 → 내지 ' + plan.total + '쪽';
@@ -850,8 +930,9 @@ async function prepareBook(signal) {
   if (Boolean(meta['trim-width']) !== Boolean(meta['trim-height'])) {
     throw new Error('재단 가로와 세로를 함께 입력해주세요.');
   }
-  if (!state.item && !state.files.front) throw new Error('앞표지를 선택해주세요.');
-  if (!state.item && !state.files.interior) throw new Error('내지 PDF를 선택해주세요.');
+  const cards = meta['book-form-type'] === 'cards';
+  if (!cards && !state.item && !state.files.front) throw new Error('앞표지를 선택해주세요.');
+  if (!cards && !state.item && !state.files.interior) throw new Error('내지 PDF를 선택해주세요.');
   const assets = {};
   for (const key of ['front', 'back', 'spine']) {
     if (meta[key + '-remove'] && key !== 'front') {
@@ -863,9 +944,18 @@ async function prepareBook(signal) {
       if (key === 'front') assets.thumbnail = uploaded.thumbnailAsset;
     }
   }
+  for (const [face, cut] of Object.entries(meta.construction.edgeTreatments)) {
+    if (cut.mode !== 'scan') continue;
+    const key = 'edge-' + face;
+    if (state.files[key]) {
+      const uploaded = await uploadFileAsset(key, fileLabels[key], signal);
+      (assets.edgeScans ||= {})[face] = uploaded.asset;
+    } else if (!state.item?.edgeTreatments?.[face]?.imageSrc) throw new Error(cutFaces[face] + ' 단면 이미지를 선택해주세요.');
+  }
   let pdf;
   try {
-    if (state.files.interior) {
+    if (cards) assets.cards = await cardEditor.prepare(signal);
+    else if (state.files.interior) {
       const signature = state.files.interior.signature;
       const pageLayout = meta['page-layout'];
       const reference = pageLayout === 'auto' ? referencePageRatio(state.uploads.front?.ratio ?? state.item?.coverRatio) : undefined;
@@ -890,7 +980,8 @@ async function prepareBook(signal) {
               changeProgress(state.pdf.total + 1, current - 1, '내지 저장 중 · ' + current + ' / ' + state.pdf.total + '쪽');
               const { blob, ratio } = await renderPDFPage(page, sheet.count, side, 2000);
               const asset = await uploadAsset(blob, signal, waitingMessage);
-              state.pdf.pages.push(asset);
+              const sizeMm = pdfFaceSize(page.getViewport({ scale: 1 }), sheet.count);
+              state.pdf.pages.push({ ...asset, ...(sizeMm && { sizeMm }) });
               state.pdf.ratio ??= ratio;
               await persist();
             }
@@ -912,18 +1003,20 @@ async function prepareBook(signal) {
   return {
     ...commonPayload(),
     language: meta.language?.trim() || '',
+    ...materialPayload(meta, cards ? assets.cards.length * 2 : assets.pages?.length ?? (state.item?.pages?.length || 0) / (meta['join-split'] ? 2 : 1),
+      trimSize({ trimSizeMm, coverRatio: state.uploads.front?.ratio ?? state.item?.coverRatio }), assets.pages || state.item?.pages),
     bindingType: meta['binding-type'], mockupView: meta['mockup-view'],
     mockupDetails: meta.mockupDetails,
     caseColor: meta['auto-case-color'] ? null : meta['case-color'],
     paperColor: meta['auto-paper-color'] ? null : meta['paper-color'],
     pageJumpEnabled: meta['page-jump'], resumeReadingEnabled: meta['resume-reading'],
     firstPageSide: meta['first-page-side'] || null,
-    ...(assets.pages ? { pdfLayout: state.pdf.plan?.layout ?? state.pdf.layout } : { joinSplitPages: Boolean(meta['join-split']) }),
+    ...(!cards && (assets.pages ? { pdfLayout: state.pdf.plan?.layout ?? state.pdf.layout } : { joinSplitPages: Boolean(meta['join-split']) })),
     ...(assets.pages && state.pdf.plan?.layout === 'mixed' && { pdfSheetSides: state.pdf.plan.sheets }),
     trimSizeMm,
     spineWidthMm: meta['spine-width'] ? Number(meta['spine-width']) : inferredSpineWidth ?? null,
-    pageRatio: state.pdf?.ratio ?? state.item?.pageRatio,
-    coverRatio: state.uploads.front?.ratio ?? state.item?.coverRatio,
+    pageRatio: (cards ? assets.cards[0]?.front?.ratio : state.pdf?.ratio) ?? state.item?.pageRatio,
+    coverRatio: state.uploads.front?.ratio ?? state.item?.coverRatio ?? assets.cards?.[0]?.front?.ratio,
     assets,
   };
 }
@@ -1052,6 +1145,8 @@ async function clearEditor() {
   fileMemory.clear();
   filePersistence = true;
   form.reset();
+  previewFaceSizes = undefined;
+  previewPageCount = undefined;
   writeMetadata();
   updateView();
   renderProjectImages();
@@ -1062,7 +1157,9 @@ async function clearEditor() {
 }
 
 function hasWorkDraft() {
-  return state.item || state.kind !== 'book' || state.tagsTouched ||
+  const options = state.metadata.construction;
+  return state.item || state.kind !== 'book' || state.tagsTouched || state.cards.length ||
+    options && (Object.keys(options.edgeTreatments || {}).length || options.edgeBands?.length || options.leafLayout || options.ringPositions) ||
     mockupControls.hasChanges(state.metadata.mockupDetails) ||
     checkboxFields.some(id => Boolean(state.metadata[id]) !== Boolean(metadataDefaults[id])) ||
     Object.keys(state.files).length || metadataFields.some(id =>
@@ -1106,6 +1203,7 @@ async function editItem(item) {
       'first-page-side': item.firstPageSide ?? '',
       'join-split': item.joinSplitPages === true,
     };
+    state.cards = item.bookForm === 'cards' ? cardsFromPages(item.pages) : [];
     state.images = (item.media ?? item.images ?? []).map(entry => ({ ...entry, id: crypto.randomUUID() }));
     state.galleryImages = (item.galleryImages || []).map(image => ({ ...image, id: crypto.randomUUID() }));
     writeMetadata();
@@ -1314,6 +1412,7 @@ $('#logout').addEventListener('click', async () => {
 async function initialize() {
   const saved = await loadDraft();
   state = saved?.version === 2 ? saved : emptyDraft();
+  state.cards ??= state.item?.bookForm === 'cards' ? cardsFromPages(state.item.pages) : [];
   state.galleryImages ||= [];
   state.galleryDirty ||= false;
   state.metadata = { ...bookPreferences(state.item), ...state.metadata };
