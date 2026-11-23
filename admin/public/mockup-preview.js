@@ -4,6 +4,7 @@ export function createMockupPreview(host) {
   const root = host.attachShadow({ mode: 'open' });
   root.innerHTML = `
     <link rel="stylesheet" href="/vendor/mockup/style.css">
+    <link rel="stylesheet" href="/vendor/mockup/book-surfaces.css">
     <link rel="stylesheet" href="/mockup-preview.css">
     <div class="stage" data-uploaded data-proportional>
       <div class="model-frame"><div class="book-model" data-book="preview">
@@ -13,12 +14,31 @@ export function createMockupPreview(host) {
         <div class="case-board front-board"><i class="board-head"></i><i class="board-tail"></i></div>
         <div class="case-board back-board"><i class="board-head"></i><i class="board-tail"></i></div>
       </div></div>
+    </div>
+    <div class="preview-angles" role="group" aria-label="목업 살펴보기">
+      <button type="button" data-angle="initial">설정 각도</button>
+      <button type="button" data-angle="head">위쪽 단면</button>
+      <button type="button" data-angle="fore">책배</button>
+      <button type="button" data-angle="tail">아래쪽 단면</button>
     </div>`;
   const stage = root.querySelector('.stage');
   const model = root.querySelector('.book-model');
   const front = model.querySelector('.front');
   const sources = new Map();
+  const scanSources = new Map();
   let currentBook;
+  let selectedAngle = 'initial';
+  const inspectionViews = { head: { x: -65, y: -18 }, fore: { x: -8, y: -68 }, tail: { x: 65, y: -18 } };
+  const angleButtons = [...root.querySelectorAll('[data-angle]')];
+
+  function setView(name) {
+    selectedAngle = name;
+    const angle = inspectionViews[name] || mockupViews[currentBook?.mockupView] || mockupViews.spine;
+    model.style.setProperty('--rx', angle.x + 'deg');
+    model.style.setProperty('--ry', angle.y + 'deg');
+    for (const button of angleButtons) button.setAttribute('aria-pressed', String(button.dataset.angle === name));
+  }
+  for (const button of angleButtons) button.addEventListener('click', () => setView(button.dataset.angle));
 
   function updateMaterial() {
     const cover = front.querySelector('img');
@@ -59,12 +79,24 @@ export function createMockupPreview(host) {
   }
 
   return function render(book) {
-    currentBook = book;
+    const edgeTreatments = { ...book.edgeTreatments };
+    for (const cut of ['fore', 'head', 'tail']) {
+      const source = edgeTreatments[cut]?.imageSrc;
+      const old = scanSources.get(cut);
+      if (old && old.source !== source) {
+        URL.revokeObjectURL(old.url);
+        scanSources.delete(cut);
+      }
+      if (source instanceof Blob) {
+        if (!scanSources.has(cut)) scanSources.set(cut, { source, url: URL.createObjectURL(source) });
+        edgeTreatments[cut] = { ...edgeTreatments[cut], imageSrc: scanSources.get(cut).url };
+      }
+    }
+    if (currentBook?.mockupView !== book.mockupView) selectedAngle = 'initial';
+    currentBook = { ...book, edgeTreatments };
     stage.dataset.binding = book.bindingType;
     for (const name of ['front', 'back', 'spine']) updateFace(name, book.coverImages[name], book.title);
-    const angle = mockupViews[book.mockupView] || mockupViews.spine;
-    model.style.setProperty('--rx', angle.x + 'deg');
-    model.style.setProperty('--ry', angle.y + 'deg');
+    setView(selectedAngle);
     updateMaterial();
   };
 }

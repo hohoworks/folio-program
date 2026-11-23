@@ -8,24 +8,34 @@ export function sidesByShape({ width, height }, referenceRatio) {
   return null;
 }
 
-export async function planPdfPages(pdf, mode, referenceRatio, check = () => {}) {
+export async function planPdfPages(pdf, mode, referenceRatio, check = () => {}, collectSizes = false) {
   if (!Number.isInteger(pdf.numPages) || pdf.numPages < 1 || pdf.numPages > maxPages) {
     throw new Error('내지는 1~1,000쪽까지 등록할 수 있습니다.');
   }
   const sheets = [];
+  const faceSizes = [];
   let total = 0;
   for (let index = 1; index <= pdf.numPages; index++) {
     check();
     let count;
     if (mode === 'single' || mode === 'spread') {
       count = mode === 'single' ? 1 : 2;
+      if (collectSizes) {
+        const page = await pdf.getPage(index);
+        try {
+          const size = pdfFaceSize(page.getViewport({ scale: 1 }), count);
+          for (let side = 0; side < count; side++) faceSizes.push(size);
+        } finally { page.cleanup(); }
+      }
     } else {
       if (!Number.isFinite(referenceRatio) || referenceRatio <= 0) {
         throw new Error('자동 인식하려면 재단 크기를 입력하거나 앞표지를 선택해주세요. PDF 구성을 직접 고를 수도 있습니다.');
       }
       const page = await pdf.getPage(index);
       try {
-        count = sidesByShape(page.getViewport({ scale: 1 }), referenceRatio);
+        const bounds = page.getViewport({ scale: 1 });
+        count = sidesByShape(bounds, referenceRatio);
+        if (collectSizes && count) for (let side = 0; side < count; side++) faceSizes.push(pdfFaceSize(bounds, count));
         if (!count) throw new Error('PDF ' + index + '페이지의 비율로 낱장과 펼침면을 구분하기 어렵습니다. 재단 크기를 확인하거나 PDF 구성을 직접 선택해주세요.');
       } finally {
         page.cleanup();
@@ -36,7 +46,7 @@ export async function planPdfPages(pdf, mode, referenceRatio, check = () => {}) 
     sheets.push(count);
   }
   const layout = sheets.every(n => n === 1) ? 'single' : sheets.every(n => n === 2) ? 'spread' : 'mixed';
-  return { sheets, total, layout };
+  return { sheets, total, layout, ...(collectSizes && { faceSizes }) };
 }
 
 export function* remainingPdfPages(sheets, completed) {
@@ -47,4 +57,10 @@ export function* remainingPdfPages(sheets, completed) {
     end += count;
     if (startSide < count) yield { number: i + 1, count, startSide };
   }
+}
+
+// PDF.js reports the rotated viewport at scale 1 in points, including UserUnit.
+export function pdfFaceSize({ width, height }, sides = 1) {
+  const sizes = [width / sides, height].map(length => Math.round(length * 25.4 / 72 * 1000) / 1000);
+  return sizes.every(mm => Number.isFinite(mm) && mm > 0 && mm <= 5000) ? sizes : undefined;
 }

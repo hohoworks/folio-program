@@ -11,3 +11,7 @@
 .front:not(.artwork) { background: var(--case-color, #e6e5e3); color: var(--case-ink, #191919); }
 .back-title { font-size: clamp(13px, 4cqw, 24px); }
 @media (prefers-reduced-motion: reduce) { .book-model { transition: none; } }
+
+.preview-angles { display: flex; flex-wrap: wrap; justify-content: center; gap: 5px; padding: 6px; background: #f7f7f5; }
+.preview-angles button { border: 1px solid #c6c6c2; border-radius: 3px; background: #fff; color: #242424; padding: 4px 8px; font: 12px/1.35 system-ui, sans-serif; cursor: pointer; }
+.preview-angles button[aria-pressed="true"] { color: #fff; background: #30312f; border-color: #30312f; }
