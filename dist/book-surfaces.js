@@ -152,7 +152,7 @@ function shelfLeaves(surface, layout, size) {
   if (!layout) return;
   const outline = pathSVG(surface, 'shelf-leaves', [0, 0, layout.width, layout.height]);
   outline.style.top = percent(-layout.coverTop / size[1]);
-  outline.style.width = mm(layout.width, size[0]);
+  outline.style.width = surface.hasAttribute('data-wire-bound') ? 'var(--shelf-wire-leaves)' : mm(layout.width, size[0]);
   outline.style.height = percent(layout.height / size[1]);
   surface.style.setProperty('--shelf-leaf-width', mm(layout.width, size[0]));
   surface.insertBefore(outline, surface.querySelector('.shelf-cover'));
@@ -436,15 +436,27 @@ function wireProfile(surface, geom, width, binding) {
   if (seams.length) stroke(seams.join(''), 'var(--wire-shadow)', wire * .22);
 }
 
-function shelfWire(surface, geom, [width, height], binding) {
+function shelfWire(surface, geom, [width, height], binding, leafWidth, hasCuts) {
   const [minX, minY, maxX, maxY] = geom.rings.flat().reduce((bounds, { xyz: [x,y] }) =>
     [Math.min(bounds[0],x), Math.min(bounds[1],y), Math.max(bounds[2],x), Math.max(bounds[3],y)], [Infinity, Infinity, -Infinity, -Infinity]);
   const pad = geom.wire;
   const bounds = [minX - pad, minY - pad, maxX - minX + pad * 2, maxY - minY + pad * 2];
+  const left = Math.min(0, bounds[0]);
+  const cutWidth = hasCuts ? Math.min(width * .035, geom.depth * .38) : 0;
+  const right = Math.max(width + cutWidth, leafWidth, maxX + pad);
+  const slotWidth = right - left;
+  // The entire projected face scales with its animated shelf slot. The wire,
+  // the cover and any stepped leaves therefore stay aligned during a turn.
+  surface.style.setProperty('--shelf-wire-slot', mm(slotWidth, width));
+  surface.style.setProperty('--shelf-wire-inset', percent(-left / slotWidth));
+  surface.style.setProperty('--shelf-wire-cover', percent(width / slotWidth));
+  surface.style.setProperty('--shelf-wire-cut', percent(cutWidth / width));
+  surface.style.setProperty('--shelf-wire-leaves', percent(leafWidth / slotWidth));
+  surface.style.setProperty('--shelf-paint-ratio', slotWidth / height);
   const front = pathSVG(surface, 'shelf-hardware', bounds);
-  front.style.left = mm(bounds[0], width);
+  front.style.left = percent((bounds[0] - left) / slotWidth);
   front.style.top = percent(bounds[1] / height);
-  front.style.width = mm(bounds[2], width);
+  front.style.width = percent(bounds[2] / slotWidth);
   front.style.height = percent(bounds[3] / height);
   for (const { xyz: [cx,cy], face } of geom.holes) {
     if (face === 1) svgElement('circle', { cx, cy, r: geom.wire * 1.05, fill: '#3d3833' }, front);
@@ -495,8 +507,10 @@ export function setBookSurfaces(surface, book, details, size, depth) {
     const spine = surface.querySelector('.shelf-spine');
     paintFace(spine, 'spine', { ...state, bands: null });
   }
+  const leafWidth = layout?.width ?? size[0];
+  const hasShelfCuts = !model && !!surface.querySelector('.shelf-cuts');
   const wireKey = hardware ? JSON.stringify([book.bindingType, details.ringPlacement, details.ringCount,
-    details.ringDiameterMm, book.ringPositions, size, depth]) : null;
+    details.ringDiameterMm, book.ringPositions, size, depth, leafWidth, hasShelfCuts]) : null;
   if (hardware) surface.style.setProperty('--wire-color', details.ringColor);
   if (wireKeys.get(surface) !== wireKey) {
     wireViews.get(surface)?.();
@@ -505,7 +519,7 @@ export function setBookSurfaces(surface, book, details, size, depth) {
     if (hardware) {
       const wire = wireGeometry(book.bindingType, details, book.ringPositions, size, depth, 48);
       if (model) modelWire(surface, wire, size, book.bindingType);
-      else shelfWire(surface, wire, size, book.bindingType);
+      else shelfWire(surface, wire, size, book.bindingType, leafWidth, hasShelfCuts);
     }
     wireKeys.set(surface, wireKey);
   }
@@ -519,7 +533,9 @@ export function setBookSurfaces(surface, book, details, size, depth) {
   if (model) {
     surface.style.setProperty('--center-cut-x', mm((size[0] - right - left) / 2, size[0]));
     surface.style.setProperty('--center-cut-y', mm((size[1] - bottom - top) / 2, size[0]));
-  } else if (hardware || layout) {
+  } else {
+    if (!hardware) surface.style.setProperty('--shelf-paint-ratio', leafWidth / size[1]);
+    surface.style.setProperty('--shelf-painted-height', (bottom - top) / size[1]);
     surface.style.setProperty('--shelf-over-top', mm(-top, size[0]));
     surface.style.setProperty('--shelf-over-bottom', mm(bottom - size[1], size[0]));
   }
@@ -557,31 +573,60 @@ export function addReaderWire(spread, book, pair, layout) {
       r + ' ' + r + ' 0 1 0 ' + round(-2 * r) + ' 0Z');
     return [x, y];
   }
-  const point = coords => coords.map(round).join(' ');
-  function stroke(a, b) {
-    runs.push('M' + point(a) + 'L' + point(b));
-  }
+  // Store both sides of each turn, even where the first or last sheet exposes
+  // the return side of the coil. Only a real sheet gets a punched hole.
+  const seam = [];
+  const edges = { left: [], right: [] };
   for (let index = 0; index < ringCount; index++) {
     const fraction = custom ? book.ringPositions[index] / 100 : (index + .5) / ringCount;
     const station = Math.max(radius, Math.min(length - radius, fraction * length));
-    const ends = [];
-    for (const [side, sign] of [['left', -1], ['right', 1]]) {
-      // A coil advances along its axis between the left and right punches.
-      const offset = vertical ? station + sign * drift : station;
-      if (vertical) {
-        const y = coverTop + offset;
+    if (vertical) {
+      let punched = false;
+      const ends = [];
+      for (const [side, sign] of [['left', -1], ['right', 1]]) {
+        const y = coverTop + station + sign * drift;
         const leaf = stacks[side].find(part => y >= part.top + radius && y <= part.top + part.height - radius);
-        if (leaf) ends.push(punch(spine + sign * Math.min(reach, leaf.width / 3), y));
-      } else {
-        const leaf = stacks[side].find(part => offset >= radius && offset <= part.width - radius);
-        if (!leaf) continue;
-        const x = spine + sign * offset;
-        const boundary = edge === 'top' ? leaf.top : leaf.top + leaf.height;
-        const inset = Math.min(reach, leaf.height / 3);
-        stroke([x + sign * drift, boundary], punch(x, boundary + (edge === 'top' ? inset : -inset)));
+        if (leaf) {
+          ends.push(punch(spine + sign * Math.min(reach, leaf.width / 3), y));
+          punched = true;
+        } else {
+          ends.push([spine + sign * reach * .65, y]);
+        }
       }
+      if (punched) seam.push(edge === 'right' ? ends.reverse() : ends);
+      continue;
     }
-    if (ends.length) stroke(ends[0], ends[1] ?? [spine, coverTop + station]);
+    for (const [side, sign] of [['left', -1], ['right', 1]]) {
+      const leaf = stacks[side].find(part => station >= radius && station <= part.width - radius);
+      if (!leaf) continue;
+      const x = spine + sign * station;
+      const inward = edge === 'top' ? 1 : -1;
+      const boundary = edge === 'top' ? leaf.top : leaf.top + leaf.height;
+      const outer = [x - sign * drift, boundary + inward * gauge / 2];
+      const inner = punch(x, boundary + inward * Math.min(reach, leaf.height / 3));
+      edges[side].push([outer, inner]);
+    }
+  }
+
+  // Opposite tangents at the punches round the wire without seams. A spiral's
+  // return advances into the next turn; an O-ring returns to its own start.
+  const bend = kind === 'spiral' ? Math.min(pitch * .4, reach * .8) : Math.min(gauge * 1.35, pitch * .2);
+  const point = (p, dx = 0, dy = 0) => round(p[0] + dx) + ' ' + round(p[1] + dy);
+  function wirePath(turns, ax, ay) {
+    const dx = ax * bend, dy = ay * bend;
+    for (let i = 0; i < turns.length; i++) {
+      const [a, b] = turns[i];
+      if (!i || kind === 'ring') runs.push('M' + point(a));
+      runs.push('C' + point(a, dx, dy) + ' ' + point(b, dx, dy) + ' ' + point(b));
+      const next = kind === 'ring' ? a : turns[i + 1]?.[0];
+      if (next) runs.push('C' + point(b, -dx, -dy) + ' ' + point(next, -dx, -dy) + ' ' + point(next));
+      if (kind === 'ring') runs.push('Z');
+    }
+  }
+  if (vertical) wirePath(seam, 0, 1);
+  else {
+    wirePath(edges.left, -1, 0);
+    wirePath(edges.right, 1, 0);
   }
   if (!runs.length) return;
   const svg = pathSVG(spread, 'reader-wire-marks', [0, 0, 2 * spine, height]);

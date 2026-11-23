@@ -668,6 +668,7 @@ h1:focus { outline: none; }
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
 .shelf {
+  --shelf-motion: 460ms cubic-bezier(.33, 0, .26, 1);
   --shelf-clearance: max(6px, var(--ribbon-clearance, 0px));
   display: flex;
   align-items: end;
@@ -699,13 +700,15 @@ h1:focus { outline: none; }
   flex: 0 0 auto;
   width: var(--spine-width);
   height: var(--book-height);
-  transition: width .88s cubic-bezier(.22,.67,.22,1);
+  transition: width var(--shelf-motion), height var(--shelf-motion), margin var(--shelf-motion);
   text-decoration: none;
 }
 .shelf-book[data-book="city-lines"] { --book-height: calc(var(--shelf-height) * .66); --spine-width: clamp(30px, calc(var(--shelf-height) * .115), 63px); }
 .shelf-book[data-book="tidal-notes"] { --book-height: calc(var(--shelf-height) * .70); --spine-width: clamp(33px, calc(var(--shelf-height) * .12), 66px); }
 .shelf-book[data-proportional] {
-  --book-height: min(calc(var(--shelf-height) * .74), calc(66cqw / var(--shelf-book-ratio)));
+  --book-height: min(calc(var(--shelf-height) * .74 * var(--shelf-height-ratio, 1)),
+    calc(66cqw / var(--shelf-paint-ratio, var(--shelf-book-ratio))),
+    calc(var(--shelf-height) * .84 / var(--shelf-painted-height, 1)));
   --visible-spine: clamp(3px, calc(var(--face-width) * var(--spine-ratio)), 74px);
   --spine-width: max(24px, var(--visible-spine));
   --face-width: calc(var(--book-height) * var(--shelf-book-ratio));
@@ -720,7 +723,7 @@ h1:focus { outline: none; }
   place-items: center;
   transform-origin: left center;
   backface-visibility: hidden;
-  transition: transform .88s cubic-bezier(.22,.67,.22,1), opacity .62s;
+  transition: transform var(--shelf-motion), opacity var(--shelf-motion);
 }
 .shelf-spine {
   width: var(--visible-spine, var(--spine-width));
@@ -737,12 +740,12 @@ h1:focus { outline: none; }
   width: var(--face-width);
   border-radius: 2px 2px 1px 0;
   opacity: 0;
-  transform: rotateY(87deg);
+  transform: scaleX(.045);
   box-shadow: 2px 1px 6px #241b1429;
 }
 .shelf-book.is-preview { width: var(--face-width); z-index: 1; }
-.shelf-book.is-preview .shelf-cover { opacity: 1; transform: rotateY(0); }
-.shelf-book.is-preview .shelf-spine { opacity: 0; transform: rotateY(-84deg); }
+.shelf-book.is-preview .shelf-cover { opacity: 1; transform: scaleX(1); }
+.shelf-book.is-preview .shelf-spine { opacity: 0; transform: scaleX(.045); }
 
 .cover-art {
   container-type: inline-size;
@@ -890,8 +893,8 @@ h1:focus { outline: none; }
     repeating-linear-gradient(86deg, #211a151c 0, transparent calc(var(--warp-pitch) * .55) var(--warp-pitch)),
     var(--ribbon-color);
 }
-.shelf-book > .book-ribbon { visibility: hidden; }
-.shelf-book.is-preview > .book-ribbon { visibility: visible; }
+.shelf-book > .book-ribbon { opacity: 0; transition: opacity var(--shelf-motion); }
+.shelf-book.is-preview > .book-ribbon { opacity: 1; }
 
 .book-model[data-rounded-corners] .front,
 .shelf-book[data-rounded-corners] .shelf-cover { border-radius: 0 var(--corner-radius) var(--corner-radius) 0; }

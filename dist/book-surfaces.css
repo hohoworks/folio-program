@@ -68,7 +68,7 @@
   overflow: visible;
   pointer-events: none;
 }
-.shelf-hardware { opacity: 0; transition: opacity .48s; }
+.shelf-hardware { opacity: 0; transition: opacity var(--shelf-motion); }
 .shelf-book[data-wire-bound] .shelf-spine { display: none; }
 .shelf-book[data-wire-bound]:not(.is-preview) {
   width: max(24px, calc(var(--profile-height) * var(--profile-ratio)));
@@ -80,7 +80,7 @@
   height: var(--profile-height);
   width: calc(var(--profile-height) * var(--profile-ratio));
   transform: translateX(-50%);
-  transition: opacity .48s;
+  transition: opacity var(--shelf-motion);
 }
 .shelf-book.is-preview .shelf-hardware { opacity: 1; }
 .shelf-book.is-preview .shelf-wire-spine { opacity: 0; }
@@ -129,8 +129,23 @@
 .shelf-book.is-preview:has(.shelf-leaves) { width: var(--shelf-leaf-width); }
 .stage[data-uploaded] .book-model[data-card-stock] .back:not(.artwork) { background: var(--paper-color, #fff); }
 .book-model[data-card-stock] .back:not(.artwork) > span { display: none; }
-.shelf-book[data-proportional]:is([data-wire-bound].is-preview, :has(.shelf-leaves)) {
-  --book-height: calc(min(var(--shelf-height) * .74, 66cqw / var(--shelf-book-ratio)) * var(--physical-fit, 1));
+.shelf-book[data-wire-bound] {
+  overflow-x: clip;
+  overflow-y: visible;
+  overflow-clip-margin: 0;
+}
+.shelf-book[data-wire-bound].is-preview { width: var(--shelf-wire-slot); }
+.shelf-book[data-wire-bound] :is(.shelf-cover, .shelf-cuts) {
+  left: var(--shelf-wire-inset);
+  width: var(--shelf-wire-cover);
+}
+.shelf-book[data-wire-bound] .shelf-cover { transform: none; }
+.shelf-book[data-wire-bound] .shelf-fore {
+  width: var(--shelf-wire-cut);
+  right: calc(0% - var(--shelf-wire-cut));
+}
+.shelf-book[data-wire-bound] .shelf-leaves {
+  left: var(--shelf-wire-inset);
 }
 .shelf-book.is-preview:is([data-wire-bound], :has(.shelf-leaves)) {
   margin-top: var(--shelf-over-top, 0px);
