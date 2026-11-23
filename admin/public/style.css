@@ -110,6 +110,11 @@ input::file-selector-button:hover { border-color: var(--accent); color: var(--ac
 .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .file-field + .file-field, .file-field + label { margin-top: 12px; }
 .help { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.work-slug-row { display: flex; align-items: center; gap: .65em; margin-bottom: 5px; }
+.work-slug-row > span { color: var(--muted); }
+.work-slug-row input { margin: 0; }
+#work-slug-preview { margin: 3px 0 14px; overflow-wrap: anywhere; }
+#work-slug-preview[data-invalid] { color: #a22520; }
 .metadata-hint { margin-bottom: 14px; }
 .storage-note { padding: 6px var(--page-edge); border-bottom: 1px solid var(--rule); }
 .status, .error { margin: 8px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
