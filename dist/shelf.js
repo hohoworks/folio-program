@@ -15,57 +15,62 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
   let hoverAnchor;
   let pointer;
   let hoverLink;
-  let centerFrame = 0;
-  let previousFrame = 0;
-  let followPreview = true;
-  let centerSelection = false;
-  let firstCenter = true;
-  let lastScrollLeft = 0;
-  let alignmentScrollLeft;
-  let scrollIdle;
+  let entering = true;
+  let pendingReveal;
 
-  function centerPreview() {
-    if (followPreview && !centerFrame) centerFrame = requestAnimationFrame(alignPreview);
+  function finishEntry() {
+    if (!entering) return;
+    entering = false;
+    entranceSize.disconnect();
   }
+
+  function centerOnEntry() {
+    if (!entering || !element.clientWidth || !links.size) return;
+    const first = element.firstElementChild.getBoundingClientRect();
+    const last = element.lastElementChild.getBoundingClientRect();
+    if (!first.width || !last.width) return;
+    const viewport = element.getBoundingClientRect();
+    finishEntry();
+    element.scrollLeft += (first.left + last.right - viewport.left - viewport.right) / 2;
+  }
+  // The shelf can be created while a route is becoming visible. After its
+  // first measured layout, scrolling belongs to the visitor.
+  const entranceSize = new ResizeObserver(centerOnEntry);
 
   function fitRibbon() {
     const ribbon = preview?.querySelector('.book-ribbon');
     element.style.setProperty('--ribbon-clearance', (ribbon ? ribbon.offsetHeight + 2 : 0) + 'px');
   }
 
-  function alignPreview(now) {
-    centerFrame = 0;
-    if (!preview || !element.clientWidth || !followPreview) return;
-    fitRibbon();
-    // On entry center the entire collection in the actual shelf pane. Each
-    // book's slot includes its wire or projecting leaves, but excludes the
-    // empty scroll space that lets the first and last books reach the middle.
-    const targets = centerSelection
-      ? preview.querySelectorAll('.shelf-cover, .shelf-hardware, .shelf-leaves')
-      : links.values();
-    const parts = Array.from(targets, part => part.getBoundingClientRect()).filter(bounds => bounds.width > 0);
-    if (!parts.length) return;
-    const left = Math.min(...parts.map(bounds => bounds.left));
-    const right = Math.max(...parts.map(bounds => bounds.right));
-    const viewport = element.getBoundingClientRect();
-    const distance = (left + right - viewport.left - viewport.right) / 2;
-    const elapsed = previousFrame ? Math.min(now - previousFrame, 32) : 16;
-    const smooth = centerSelection && !firstCenter && canAnimate() && Math.abs(distance) > 2;
-    const before = element.scrollLeft;
-    const step = smooth ? Math.sign(distance) * Math.max(1, Math.abs(distance) * (1 - Math.exp(-elapsed / 75))) : distance;
-    element.scrollLeft += step;
-    if (element.scrollLeft !== before) alignmentScrollLeft = element.scrollLeft;
-    firstCenter = false;
-    previousFrame = now;
-    if (smooth && element.scrollLeft !== before) centerPreview();
-    else previousFrame = 0;
+  function revealOutside(link, animate) {
+    const book = link.getBoundingClientRect();
+    const pane = element.getBoundingClientRect();
+    let distance;
+    if (book.right <= pane.left) distance = Math.max(book.left - pane.left - 8, book.right - pane.right + 8);
+    else if (book.left >= pane.right) distance = Math.min(book.right - pane.right + 8, book.left - pane.left - 8);
+    else return false;
+    element.scrollBy({ left: distance, behavior: animate && canAnimate() ? 'smooth' : 'instant' });
+    return true;
   }
-  const sizeObserver = new ResizeObserver(centerPreview);
-  sizeObserver.observe(element);
+
+  // Only explicit navigation to a completely hidden book may reveal it.
+  // Wait for both the closing and opening books to take their final widths.
+  async function revealAfterTurn(link) {
+    const request = {};
+    pendingReveal = request;
+    const startingScroll = element.scrollLeft;
+    const motion = element.getAnimations({ subtree: true }).filter(animation =>
+      animation.transitionProperty === 'width' && animation.effect?.target?.parentElement === element);
+    await Promise.allSettled(motion.map(animation => animation.finished));
+    if (pendingReveal !== request) return;
+    pendingReveal = undefined;
+    if (element.closest('[hidden]') || Math.abs(element.scrollLeft - startingScroll) > 1) return;
+    revealOutside(link, true);
+  }
 
   function showPreview(link) {
-    followPreview = true;
-    centerSelection = true;
+    finishEntry();
+    pendingReveal = undefined;
     if (preview !== link) {
       preview?.classList.remove('is-preview');
       preview?.removeAttribute('aria-current');
@@ -76,7 +81,6 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
       fitRibbon();
       onPreview(link.dataset.book);
     }
-    centerPreview();
   }
 
   function canAnimate() {
@@ -90,7 +94,7 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     pointer = undefined;
   }
 
-  function activate(link, open) {
+  function activate(link, open, reveal = false) {
     if (!link || element.closest('[hidden]')) return;
     resetHover();
     showPreview(link);
@@ -98,6 +102,8 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
       const book = books[Number(link.dataset.shelfIndex)];
       const cover = link.querySelector('.shelf-cover');
       select(book, canAnimate() ? cover.getBoundingClientRect() : null);
+    } else if (reveal) {
+      revealAfterTurn(link);
     }
   }
 
@@ -166,7 +172,9 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
       // before that gesture has actually selected it.
       if (pressed && !pressed.released) return;
       resetHover();
+      const revealed = revealOutside(link, false);
       showPreview(link);
+      if (!revealed) revealAfterTurn(link);
     });
     if (!preview) {
       preview = link;
@@ -174,8 +182,6 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
       link.setAttribute('aria-current', 'true');
     }
     element.append(link);
-    sizeObserver.observe(link);
-    cover.addEventListener('transitionend', centerPreview);
     links.set(book.id, link);
   }
 
@@ -184,8 +190,11 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
   element.style.setProperty('--widest-paint-mm', widestPaint);
   element.style.setProperty('--tallest-paint-mm', tallestPaint);
   fitRibbon();
-  centerPreview();
-  if (preview) onPreview(preview.dataset.book);
+  if (preview) {
+    entranceSize.observe(element);
+    centerOnEntry();
+    onPreview(preview.dataset.book);
+  }
 
   element.addEventListener('pointermove', event => {
     const x = event.clientX, y = event.clientY;
@@ -219,8 +228,8 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     const unfolding = held && hoverAnchor.automatic && (hit !== preview || performance.now() - previewStarted < turnDuration);
     pressed = { id: event.pointerId, link, open: link === preview && !unfolding, x: event.clientX, y: event.clientY };
     resetHover();
-    followPreview = false;
-    previousFrame = 0;
+    finishEntry();
+    pendingReveal = undefined;
   });
   window.addEventListener('pointerup', event => {
     if (pressed?.id === event.pointerId) pressed.released = true;
@@ -240,32 +249,17 @@ export function createShelf(element, books, { addAssetImage, addCoverArt, select
     }
   });
   element.addEventListener('scroll', () => {
-    if (!element.clientWidth) return;
-    const position = element.scrollLeft;
-    if (position === lastScrollLeft) return;
-    lastScrollLeft = position;
-    const aligned = position === alignmentScrollLeft;
-    alignmentScrollLeft = undefined;
-    if (aligned && !centerSelection) return;
-    // Native thumb drags and assistive scroll actions may deliver only scroll.
-    // A focus change can scroll its link before the requested alignment frame.
-    if (!aligned && !(centerSelection && centerFrame)) {
-      followPreview = false;
-      previousFrame = 0;
-    }
-    element.setAttribute('data-scrolling', '');
-    clearTimeout(scrollIdle);
-    scrollIdle = setTimeout(() => element.removeAttribute('data-scrolling'), 650);
+    if (entering && element.clientWidth && element.scrollLeft) finishEntry();
   }, { passive: true });
   element.addEventListener('wheel', () => {
     resetHover();
     if (pressed) pressed.dragged = true;
-    followPreview = false;
-    previousFrame = 0;
+    finishEntry();
+    pendingReveal = undefined;
   }, { passive: true });
   return {
     links,
-    pick(id) { const link = links.get(id); activate(link, link === preview); },
-    step(direction) { const link = direction < 0 ? preview?.previousElementSibling : preview?.nextElementSibling; activate(link, false); },
+    pick(id) { const link = links.get(id); activate(link, link === preview, true); },
+    step(direction) { const link = direction < 0 ? preview?.previousElementSibling : preview?.nextElementSibling; activate(link, false, true); },
   };
 }

@@ -695,13 +695,13 @@ h1:focus { outline: none; }
   --shelf-clearance: max(6px, var(--ribbon-clearance, 0px));
   display: flex;
   align-items: end;
-  justify-content: flex-start;
+  justify-content: safe center;
   gap: 4px;
   position: relative;
   margin-inline: auto;
   width: 100%;
   padding-inline: 8px;
-  padding-top: 8px;
+  scrollbar-width: none;
   /* Extend the scrollport below the shelf line without moving the books. */
   padding-bottom: var(--shelf-clearance);
   margin-bottom: calc(-1 * var(--shelf-clearance));
@@ -711,27 +711,7 @@ h1:focus { outline: none; }
   border-bottom: 1px solid transparent;
   background: linear-gradient(var(--accent), var(--accent)) left bottom var(--shelf-clearance) / 100% 1px no-repeat border-box;
 }
-/* Keep the same native drag track at rest and while the books move. */
-.shelf {
-  --shelf-thumb: transparent;
-  scrollbar-width: thin;
-  scrollbar-color: var(--shelf-thumb) transparent;
-}
-.shelf[data-scrolling] { --shelf-thumb: #767676; }
-@supports selector(::-webkit-scrollbar) {
-  .shelf { scrollbar-width: auto; scrollbar-color: auto; }
-  .shelf::-webkit-scrollbar { height: 8px; background: transparent; }
-  .shelf::-webkit-scrollbar-track { background: transparent; }
-  .shelf::-webkit-scrollbar-thumb {
-    border: 2px solid transparent;
-    border-radius: 8px;
-    background: var(--shelf-thumb) padding-box;
-  }
-}
-@media (forced-colors: active) {
-  .shelf[data-scrolling] { --shelf-thumb: CanvasText; }
-}
-.shelf::before, .shelf::after { content: ''; flex: 0 0 50%; }
+.shelf::-webkit-scrollbar { display: none; }
 
 .shelf-book {
   --material-width: var(--face-width);
@@ -787,6 +767,8 @@ h1:focus { outline: none; }
   box-shadow: 2px 1px 6px #241b1429;
 }
 .shelf-book.is-preview { width: var(--face-width); margin-inline: var(--open-gutter); z-index: 1; }
+.shelf-book.is-preview:first-child { margin-inline-start: 0; }
+.shelf-book.is-preview:last-child { margin-inline-end: 0; }
 .shelf-book:not(.is-preview)::before { content: ''; position: absolute; inset: 0 -2px; }
 @media (max-width: 760px) { .shelf { --open-gutter: 8px; } }
 .shelf-book.is-preview .shelf-cover { --face-fade: var(--shelf-face-arrive); opacity: 1; transform: scaleX(1); }
@@ -1054,6 +1036,50 @@ h1:focus { outline: none; }
 .fore[data-cut] .fore-arc-print { background: var(--cut-paint, var(--paper-color, #efede4)); }
 .fore-arc-panel::after { content: ""; position: absolute; inset: 0; background: rgb(59 49 36 / var(--edge-shadow)); }
 .book-model[data-hollow-cut] > :is(.head, .tail) { clip-path: var(--fore-contour); }
+/* Case ends are built at three elevations: the turned-in covering at the
+   boards, the endband just above the pages, and the lining behind the block. */
+.book-model[data-case-cut] {
+  --case-cut-extension: calc(var(--depth) * .25);
+  --turn-in-color: color-mix(in srgb, var(--case-color, #635642) 90%, #baa58a);
+  --lining-shadow: color-mix(in srgb, var(--case-color, #635642) 37%, #736956);
+  --headband-shadow: color-mix(in srgb, var(--headband-a) 68%, #44362c);
+}
+.book-model[data-case-cut] > :is(.head, .tail) { left: calc(-1 * var(--case-cut-extension)); clip-path: var(--case-paper-outline); }
+.book-model[data-case-cut] > :is(.head, .tail):not([data-cut]) {
+  background:
+    linear-gradient(90deg, #493b282b 0%, transparent 10%, #fff2 57%, transparent 91%),
+    repeating-linear-gradient(0deg, #6b5a3617 0 .32px, transparent .52px 1.15px,
+      #fff3 1.22px 1.54px, transparent 1.7px 2.62px, #73634412 2.7px 3px, transparent 3.2px 4.55px),
+    var(--paper-color, #efede4);
+}
+.stage .book-model[data-shaped-spine][data-case-cut] :is(.spine, .spine.artwork) {
+  /* The center seam buffer belongs inside the spine, below the cut. At
+     the head and tail it would otherwise draw a straight wall across the fold. */
+  --spine-backing-inset: calc(var(--lip) + 1px);
+  background: linear-gradient(to bottom, transparent var(--spine-backing-inset),
+    var(--case-color, var(--binding, #635642)) var(--spine-backing-inset) calc(100% - var(--spine-backing-inset)),
+    transparent calc(100% - var(--spine-backing-inset)));
+}
+.book-model[data-case-cut] > .spine .round-spine::before,
+.book-model[data-case-cut] > .spine .round-spine::after,
+.book-model[data-case-cut] > :is(.head, .tail)::before { content: none; }
+.case-cut-insert {
+  position: absolute;
+  left: calc(var(--cut-unit) * var(--cut-start));
+  width: calc(var(--cut-unit) * var(--cut-span));
+  height: var(--cut-unit);
+  backface-visibility: hidden;
+  overflow: visible;
+  pointer-events: none;
+}
+.case-at-head { top: calc(var(--cut-level) - var(--cut-unit) / 2); transform: rotateX(90deg); filter: brightness(var(--head-light, 1)); }
+.case-at-tail { bottom: calc(var(--cut-level) - var(--cut-unit) / 2); transform: rotateX(-90deg); filter: brightness(var(--tail-light, 1)); }
+.case-turn-in { --cut-level: 0px; }
+.case-lining { --cut-level: calc(var(--lip) + .32px); }
+.case-gatherings { --cut-level: calc(var(--lip) - .13px); mask-image: linear-gradient(to right, #000 45%, transparent); }
+.case-endband { --cut-level: calc(var(--lip) * .54); }
+.book-model[data-case-cut] :is(.front-board .board-head, .back-board .board-tail) { clip-path: var(--board-notch-bottom); }
+.book-model[data-case-cut] :is(.front-board .board-tail, .back-board .board-head) { clip-path: var(--board-notch-top); }
 .shelf-book[data-round-spine] .shelf-spine::after {
   content: "";
   position: absolute;
