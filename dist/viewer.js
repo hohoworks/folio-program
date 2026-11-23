@@ -1,8 +1,9 @@
 import { loadCatalog, readerSpreads, trimSize } from './catalog.js';
 import { setBookMaterial, mockupViews } from './book-material.js';
 import { createCurl, createCardTurn } from './curl.js';
-import { cardFaces, cardThumbnail, leafGeometry, physicalSpreads } from './book-format.js';
+import { bookLeafGeometry, cardFaces, cardThumbnail, physicalSpreads } from './book-format.js';
 import { createMobileReader } from './mobile-reader.js';
+import { addReaderSaddle } from './saddle-material.js';
 import { addReaderWire } from './book-surfaces.js';
 import { createShelf } from './shelf.js';
 import { titleLanguage, alignDetailTitle } from './title-language.js';
@@ -253,14 +254,14 @@ function pageStack(side, face) {
   const first = createPage(face);
   first.classList.add('paper-' + side);
   if (!face) return { first, layers: [] };
-  applyLeafSize(first, geometry.leaves[Math.ceil(face / 2) - 1]);
+  applyLeafSize(first, (geometry.faces?.[face - 1] ?? geometry.leaves[Math.ceil(face / 2) - 1]));
   const layers = [first];
   const step = side === 'right' ? 2 : -2;
   // Every sheet touches the spine. Skip entirely hidden faces, keeping the
   // actual scans on exposed steps even when leaf widths and heights alternate.
-  const visible = [geometry.leaves[Math.ceil(face / 2) - 1]];
+  const visible = [(geometry.faces?.[face - 1] ?? geometry.leaves[Math.ceil(face / 2) - 1])];
   for (let next = face + step; next >= 1 && next <= pages.length; next += step) {
-    const leaf = geometry.leaves[Math.ceil(next / 2) - 1];
+    const leaf = geometry.faces?.[next - 1] ?? geometry.leaves[Math.ceil(next / 2) - 1];
     if (visible.some(above => above.width >= leaf.width && above.top <= leaf.top &&
         above.top + above.height >= leaf.top + leaf.height)) continue;
     const under = createPage(next);
@@ -304,6 +305,7 @@ function createSpread(index) {
   element.dataset.spreadIndex = index;
   element.setAttribute('aria-label', pageLabel(spreadLabel(index)));
   addReaderWire(element, activeBook, pair, geometry);
+  addReaderSaddle(element, activeBook, pair, geometry, spreads);
   return { element, left, right };
 }
 
@@ -773,8 +775,10 @@ function addCoverArt(cover, book, imageSrc = book.coverImages?.front) {
   appendText(cover, 'span', 'cover-bottom', DEFAULT_SITE_TITLE);
 }
 
-function addCardThumbnail(parent, book, lazy = false) {
-  const { mode, src } = cardThumbnail(book);
+function addCardThumbnail(parent, book, { lazy = false, flat = false } = {}) {
+  const thumbnail = cardThumbnail(book);
+  const mode = flat ? 'single' : thumbnail.mode;
+  const src = (flat && book.pages?.[2 * (thumbnail.card - 1)]?.imageSrc) || thumbnail.src;
   const layers = mode === 'deck' ? Math.min(3, Math.ceil(book.pages.length / 2) - 1) : 0;
   const [width, height] = trimSize(book);
   const radius = Math.min(book.cardStock?.cornerRadiusMm ?? 0, width / 2, height / 2);
@@ -795,7 +799,7 @@ function addCardThumbnail(parent, book, lazy = false) {
 }
 
 function addShelfThumbnail(cover, book) {
-  if (book.bookForm === 'cards') addCardThumbnail(cover, book);
+  if (book.bookForm === 'cards') addCardThumbnail(cover, book, { flat: true });
   else addCoverArt(cover, book, book.thumbnailSrc);
 }
 
@@ -1216,7 +1220,7 @@ function createProjectCard(entry, index) {
   }
   sizePreview(ratio || 1);
   if (isCardBook) {
-    addCardThumbnail(picture, entry, index > 2);
+    addCardThumbnail(picture, entry, { lazy: index > 2 });
   } else if (entry.type === 'book' && !entry.coverImages) {
     const cover = appendText(picture, 'span', 'cover-art', '');
     cover.dataset.book = entry.id;
@@ -1463,7 +1467,7 @@ function routeFromHash() {
 function showBook(book, moveFocus) {
   const cards = book.bookForm === 'cards';
   pages = cards ? cardFaces(book.pages) : book.pages;
-  geometry = !cards && book.leafLayout ? leafGeometry(book.leafLayout, Math.ceil(pages.length / 2), trimSize(book), pages) : undefined;
+  geometry = cards ? undefined : bookLeafGeometry(book, pages, pages.length);
   if (cards) spreads = pages.map((_, index) => ({ left: index + 1, right: 0 }));
   else spreads = geometry ? physicalSpreads(pages.length) : readerSpreads(book);
   stage.dataset.readerForm = cards ? 'cards' : 'bound';

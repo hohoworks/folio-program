@@ -4,6 +4,20 @@
     repeating-linear-gradient(var(--paper-angle, 90deg), transparent 0 2px, #211a0e10 2.2px 2.8px),
     var(--cut-paint, var(--paper-color, #efede4));
 }
+/* The print faces stay flat. Each board edge travels from its outside ply
+   toward the text block. The back board is the mirror of the front board. */
+.book-model[data-cover-stock] {
+  --board: min(var(--custom-board), calc((var(--depth) - min(.5px, var(--depth) * .04)) / 2));
+}
+.stage:not([data-binding="hardcover"]) .book-model[data-cover-stock] { --lip: 0px; }
+.book-model[data-cover-stock] .front-board { --fore-plies: to right; --head-plies: to top; --tail-plies: to bottom; }
+.book-model[data-cover-stock] .back-board { --fore-plies: to left; --head-plies: to bottom; --tail-plies: to top; }
+.book-model[data-cover-stock] .case-board::after { background: linear-gradient(var(--fore-plies), var(--cover-plies)); }
+.book-model[data-cover-stock] .board-head { background: linear-gradient(var(--head-plies), var(--cover-plies)); }
+.book-model[data-cover-stock] .board-tail { background: linear-gradient(var(--tail-plies), var(--cover-plies)); }
+.book-model[data-cover-stock] :is(.front-rim.upper, .back-rim.lower) { --strip-color: linear-gradient(to top, var(--cover-plies)); }
+.book-model[data-cover-stock] :is(.front-rim.lower, .back-rim.upper) { --strip-color: linear-gradient(to bottom, var(--cover-plies)); }
+.book-model [data-cut="laminated"] { background: var(--cut-paint); }
 .edge-scan {
   position: absolute;
   inset: 0;
@@ -87,7 +101,8 @@
 .shelf-book.is-preview .shelf-hardware { opacity: 1; transition: opacity var(--shelf-face-arrive); }
 .shelf-book.is-preview .shelf-wire-spine { opacity: 0; transition: opacity var(--shelf-face-leave); }
 .book-model[data-variable-block] { --sheet-depth: calc(var(--depth) - min(1.2px, var(--depth) * .13)); }
-.stage[data-binding="hardcover"] .book-model[data-variable-block] { --sheet-depth: var(--block); }
+.stage[data-binding="hardcover"] .book-model[data-variable-block],
+.book-model[data-cover-stock][data-variable-block] { --sheet-depth: var(--block); }
 .book-model[data-variable-block] > :is(.fore, .head, .tail),
 .book-model[data-variable-block] .corner-strip.edge-paper { display: none; }
 .leaf-slice { inset: auto; left: 0; }
@@ -158,3 +173,79 @@
   margin-top: var(--shelf-over-top, 0px);
   margin-bottom: var(--shelf-over-bottom, 0px);
 }
+
+/* Each stitched gathering owns one rounded fold. All the folds together
+   occupy the book's measured thickness, including on the edge-on shelf. */
+.saddle-folds, .saddle-fold {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform-style: preserve-3d;
+}
+.saddle-fold {
+  --fold-depth: calc(var(--binding-depth) * var(--fold-share));
+  --fold-color: var(--case-color, var(--binding, #ded8c6));
+  right: auto;
+  bottom: auto;
+}
+.book-model[data-saddle-folds] .spine {
+  --binding-depth: var(--depth);
+  overflow: visible;
+  transform-style: preserve-3d;
+  background: none;
+}
+.shelf-book[data-saddle-folds] .shelf-spine { --binding-depth: var(--visible-spine, var(--spine-width)); background: none; }
+.shelf-spine .saddle-fold {
+  background: linear-gradient(90deg, #28211966 0%, #453a2a20 6%, #fff2 28%, #ffffff30 40%, #fff0 65%, #40362826 89%, #2a241a5c),
+    var(--fold-color);
+}
+.shelf-spine.artwork .saddle-fold, .spine.artwork .fold-facet { --fold-color: transparent; }
+.fold-facet {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: linear-gradient(to right, rgb(30 24 16 / var(--fold-tone)), transparent),
+    linear-gradient(to bottom, #fff1, #fff0 18%, #261d1008 83%, #3f372514), var(--fold-color);
+}
+.fold-cap {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: calc(var(--fold-depth) * .27);
+  transform-origin: center top;
+  transform: rotateX(90deg);
+  clip-path: ellipse(50% 100% at 50% 0%);
+  background: repeating-radial-gradient(ellipse at 50% -260%, var(--paper-color, #eee9d9) 0 .9px, #958c79 1px 1.17px);
+}
+.fold-cap.upper { top: 0; }
+.fold-cap.lower { top: 100%; }
+.fold-fasteners {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: translateZ(calc(var(--fold-depth) * .275 + .07px));
+}
+.shelf-spine .fold-fasteners { overflow: hidden; transform: none; }
+.saddle-eye {
+  position: absolute;
+  left: 50%;
+  width: calc(var(--eye-mm) * 6.5);
+  height: calc(var(--eye-mm) * 12);
+  overflow: visible;
+  transform-origin: left center;
+  transform: translateY(-50%) translateZ(calc(var(--fold-depth) * .275)) rotateY(-78deg);
+}
+.shelf-book[data-saddle-sections] { height: calc(var(--book-height) * var(--saddle-hull-ratio)); }
+.shelf-book[data-saddle-sections] > :is(.shelf-cover, .shelf-cuts) {
+  top: var(--saddle-rise); bottom: auto; height: var(--book-height);
+}
+.shelf-book[data-saddle-sections].is-preview:has(.shelf-leaves) { margin-block: 0; }
+.leaf-slice.section-front::before, .leaf-slice.section-back::after { background: var(--section-cover); }
+.reader-saddle-marks {
+  position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2;
+  pointer-events: none;
+}
+.spread[inert] > .reader-saddle-marks { visibility: hidden; }
