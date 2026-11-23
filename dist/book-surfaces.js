@@ -1,4 +1,4 @@
-import { setBookSupport } from './book-photo.js';
+import { renderedBookDepth, setBookSupport } from './book-photo.js';
 import { bookLeafGeometry, leafCountForBook, stockThickness, trimSize } from './book-format.js';
 import { setExposedSewing, setSaddleSpine } from './saddle-material.js';
 import { resolveMockupDetails } from './mockup-options.js';
@@ -501,6 +501,7 @@ function modelWire(surface, geom, [width, height], binding) {
   // Render a whole curve in screen space. Its stroke keeps a round gauge even
   // when the ring is edge-on. The projection uses the same moving CSS camera as the book.
   const frame = surface.parentElement;
+  const cover = surface.querySelector(':scope > .front');
   const ink = pathSVG(frame, 'model-wire-ink', [0, 0, width, height]);
   const gauge = geom.wire * (binding === 'ring' ? 1.24 : 1);
   const finish = 'wire-finish-' + ++wireFinishId;
@@ -540,12 +541,13 @@ function modelWire(surface, geom, [width, height], binding) {
     if (!scaleX || !scaleY || !surface.offsetWidth) return;
     const perspective = parseFloat(getComputedStyle(frame).perspective);
     const color = surface.style.getPropertyValue('--wire-color');
-    const stamp = [size.transform, scaleX, scaleY, perspective, color].join('/');
+    const depth = renderedBookDepth(cover);
+    const stamp = [size.transform, scaleX, scaleY, depth, perspective, color].join('/');
     if (stamp !== previous) {
       previous = stamp;
       ink.style.setProperty('--wire-color', color);
       const matrix = new DOMMatrixReadOnly(size.transform === 'none' ? undefined : size.transform);
-      const scaleZ = Math.max(1.5, Math.min(80, scaleX * geom.depth)) / geom.depth;
+      const scaleZ = depth / geom.depth;
       const eye = matrix.inverse().transformPoint({ x: 0, y: 0, z: perspective });
       const camera = [eye.x / scaleX + width / 2, eye.y / scaleY + height / 2, eye.z / scaleZ];
       const project = ([x, y, z]) => {
@@ -782,10 +784,10 @@ export function setBookSurfaces(surface, book, details, size, depth) {
       paintFace(edge, cut, state);
     }
   } else {
-    // The open shelf cover is seen head-on. A card deck shows its plies
-    // on the closed spine, with the selected card's flat face when open.
-    if (cards) surface.querySelector(':scope > .shelf-cuts')?.remove();
-    else shelfEdges(surface, state);
+    // Only the wirebound projection reserves room for cut edges.
+    // A head-on cover hides the cuts; genuinely larger leaves remain visible.
+    if (hardware) shelfEdges(surface, state);
+    else surface.querySelector(':scope > .shelf-cuts')?.remove();
     shelfLeaves(surface, layout, size);
     paintFace(spine, 'spine', { ...state, bands: null });
   }

@@ -406,6 +406,7 @@ function setPhysicalDetails(surface, book, width) {
   if (model) roundedCorners(surface, radius > 0, hardcover || paperback || Boolean(coverDepth), cards);
   setBookSurfaces(surface, book, d, [width, height], depthMm);
   if (model) {
+    surface.parentElement.style.setProperty('--measured-scan-ratio', book.coverImages?.spine && book.spineWidthMm > 0 ? depthMm / width : 0);
     const shape = hardcover ? d.spineShape : paperback ? 'paper' : null;
     surface.toggleAttribute('data-shaped-spine', Boolean(shape));
     surface.toggleAttribute('data-soft-cover', paperback);
