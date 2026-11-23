@@ -687,7 +687,10 @@ export function addReaderWire(spread, book, pair, layout) {
   const stacks = {};
   for (const side of ['left', 'right']) {
     stacks[side] = pair[side] ? [...spread.querySelectorAll('.paper-' + side + '[data-page]')].reverse()
-      .map(page => layout?.leaves[Math.ceil(Number(page.dataset.page) / 2) - 1] ?? standard) : [];
+      .map(page => {
+        const index = Number(page.dataset.page) - 1;
+        return layout?.faces?.[index] ?? layout?.leaves[Math.floor(index / 2)] ?? standard;
+      }) : [];
   }
   const vertical = edge === 'left' || edge === 'right';
   const length = vertical ? trimHeight : trimWidth;
@@ -695,7 +698,6 @@ export function addReaderWire(spread, book, pair, layout) {
   const gauge = Math.min(1.55, Math.max(.65, ringDiameterMm * .055), pitch * .27);
   const radius = gauge * 1.12;
   const reach = Math.min(7.5, Math.max(2.5, ringDiameterMm * .21));
-  const drift = kind === 'spiral' ? Math.min(pitch * .24, reach * .58) * (edge === 'right' || edge === 'bottom' ? -1 : 1) : 0;
   const custom = kind === 'ring' && book.ringPositions?.length === ringCount;
   const holes = [], runs = [];
 
@@ -713,10 +715,10 @@ export function addReaderWire(spread, book, pair, layout) {
     const fraction = custom ? book.ringPositions[index] / 100 : (index + .5) / ringCount;
     const station = Math.max(radius, Math.min(length - radius, fraction * length));
     if (vertical) {
+      const y = coverTop + station;
       let punched = false;
       const ends = [];
       for (const [side, sign] of [['left', -1], ['right', 1]]) {
-        const y = coverTop + station + sign * drift;
         const leaf = stacks[side].find(part => y >= part.top + radius && y <= part.top + part.height - radius);
         if (leaf) {
           ends.push(punch(spine + sign * Math.min(reach, leaf.width / 3), y));
@@ -734,25 +736,26 @@ export function addReaderWire(spread, book, pair, layout) {
       const x = spine + sign * station;
       const inward = edge === 'top' ? 1 : -1;
       const boundary = edge === 'top' ? leaf.top : leaf.top + leaf.height;
-      const outer = [x - sign * drift, boundary + inward * gauge / 2];
+      const outer = [x, boundary + inward * gauge / 2];
       const inner = punch(x, boundary + inward * Math.min(reach, leaf.height / 3));
       edges[side].push([outer, inner]);
     }
   }
 
-  // Opposite tangents at the punches round the wire without seams. A spiral's
-  // return advances into the next turn; an O-ring returns to its own start.
-  const bend = kind === 'spiral' ? Math.min(pitch * .4, reach * .8) : Math.min(gauge * 1.35, pitch * .2);
+  // Viewed straight on, each exposed turn crosses its pair of holes. The
+  // return to the next station is hidden behind the paper.
+  const bend = Math.min(gauge * 1.35, pitch * .2);
   const point = (p, dx = 0, dy = 0) => round(p[0] + dx) + ' ' + round(p[1] + dy);
   function wirePath(turns, ax, ay) {
     const dx = ax * bend, dy = ay * bend;
-    for (let i = 0; i < turns.length; i++) {
-      const [a, b] = turns[i];
-      if (!i || kind === 'ring') runs.push('M' + point(a));
-      runs.push('C' + point(a, dx, dy) + ' ' + point(b, dx, dy) + ' ' + point(b));
-      const next = kind === 'ring' ? a : turns[i + 1]?.[0];
-      if (next) runs.push('C' + point(b, -dx, -dy) + ' ' + point(next, -dx, -dy) + ' ' + point(next));
-      if (kind === 'ring') runs.push('Z');
+    for (const [a, b] of turns) {
+      runs.push('M' + point(a));
+      if (kind === 'spiral') {
+        runs.push('L' + point(b));
+      } else {
+        runs.push('C' + point(a, dx, dy) + ' ' + point(b, dx, dy) + ' ' + point(b));
+        runs.push('C' + point(b, -dx, -dy) + ' ' + point(a, -dx, -dy) + ' ' + point(a) + 'Z');
+      }
     }
   }
   if (vertical) wirePath(seam, 0, 1);

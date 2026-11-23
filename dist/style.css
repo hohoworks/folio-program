@@ -142,6 +142,8 @@ h1:focus { outline: none; }
   height: var(--library-height);
 }
 .shelf-index { --index-cover-size: clamp(132px, 13vw, 176px); container-type: inline-size; min-width: 0; padding: 18px 12px 24px; border-right: 1px solid var(--accent); overflow: hidden auto; overscroll-behavior-y: contain; }
+.shelf-index { scrollbar-width: none; }
+.shelf-index::-webkit-scrollbar { display: none; }
 .shelf-index ul { margin: 0; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; list-style: none; }
 .index-link { display: grid; justify-items: center; align-content: center; min-height: 44px; gap: 7px; text-align: center; text-decoration: none; }
 .index-jacket { display: block; width: calc(var(--index-mm) * var(--trim-width-mm)); aspect-ratio: var(--index-cover-ratio, .738); position: relative; }
@@ -708,6 +710,26 @@ h1:focus { outline: none; }
   overflow-anchor: none;
   border-bottom: 1px solid transparent;
   background: linear-gradient(var(--accent), var(--accent)) left bottom var(--shelf-clearance) / 100% 1px no-repeat border-box;
+}
+/* Keep the same native drag track at rest and while the books move. */
+.shelf {
+  --shelf-thumb: transparent;
+  scrollbar-width: thin;
+  scrollbar-color: var(--shelf-thumb) transparent;
+}
+.shelf[data-scrolling] { --shelf-thumb: #767676; }
+@supports selector(::-webkit-scrollbar) {
+  .shelf { scrollbar-width: auto; scrollbar-color: auto; }
+  .shelf::-webkit-scrollbar { height: 8px; background: transparent; }
+  .shelf::-webkit-scrollbar-track { background: transparent; }
+  .shelf::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 8px;
+    background: var(--shelf-thumb) padding-box;
+  }
+}
+@media (forced-colors: active) {
+  .shelf[data-scrolling] { --shelf-thumb: CanvasText; }
 }
 .shelf::before, .shelf::after { content: ''; flex: 0 0 50%; }
 

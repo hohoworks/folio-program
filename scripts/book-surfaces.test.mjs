@@ -60,7 +60,7 @@ test('the spiral tips terminate at the binding surface, clear of the visible hea
 
 // Collect exactly the paths added by the normal reader entry point. The document
 // fixture is installed only for this synchronous render.
-function readWire(book, pair) {
+function readWire(book, pair, layout) {
   const paths = {};
   const spread = {
     append() {},
@@ -78,7 +78,7 @@ function readWire(book, pair) {
     };
   } };
   try {
-    addReaderWire(spread, book, pair);
+    addReaderWire(spread, book, pair, layout);
   } finally {
     if (previous) Object.defineProperty(globalThis, 'document', previous);
     else delete globalThis.document;
@@ -86,7 +86,7 @@ function readWire(book, pair) {
   return paths;
 }
 
-test('the reader threads one coil through every punched face, including single-sided spreads', () => {
+test('each exposed spiral turn crosses the binding at right angles on single pages and full spreads', () => {
   for (const ringPlacement of ['left', 'right', 'top', 'bottom']) {
     const book = { bindingType: 'spiral', trimSizeMm: [120, 180], mockupDetails: { ringPlacement, ringCount: 9 } };
     for (const pair of physicalSpreads(4)) {
@@ -95,15 +95,39 @@ test('the reader threads one coil through every punched face, including single-s
       const wire = paths['reader-wire-stroke'];
       const holes = [...paths['reader-wire-holes'].matchAll(/M([-\d.]+) ([-\d.]+)a([\d.]+)/g)];
       assert.equal(holes.length, 9 * sheetCount);
-      const coils = ['top', 'bottom'].includes(ringPlacement) ? sheetCount : 1;
-      assert.equal(wire.match(/M/g).length, coils, 'one uninterrupted wire per exposed binding edge');
-      const endpoints = [...wire.matchAll(/[MCL]([^MCLZ]+)/g)].map(match => match[1].trim().split(/\s+/).slice(-2).map(Number));
+      const acrossGutter = ['left', 'right'].includes(ringPlacement);
+      const bars = [...wire.matchAll(/M([-\d.]+) ([-\d.]+)L([-\d.]+) ([-\d.]+)/g)];
+      assert.equal(bars.length, 9 * (acrossGutter ? 1 : sheetCount));
+      assert.equal(bars.map(bar => bar[0]).join(''), wire, 'returns behind the paper are invisible');
+      const endpoints = [];
+      for (const bar of bars) {
+        const [x1, y1, x2, y2] = bar.slice(1).map(Number);
+        if (acrossGutter) {
+          assert.equal(y1, y2);
+          assert.ok(Math.min(x1, x2) < 120 && Math.max(x1, x2) > 120);
+        } else {
+          assert.equal(x1, x2);
+          assert.notEqual(y1, y2);
+        }
+        endpoints.push([x1, y1], [x2, y2]);
+      }
       for (const [, left, y, radius] of holes) {
         assert.ok(endpoints.some(([px, py]) => Math.abs(px - Number(left) - Number(radius)) < .00002 && py === Number(y)),
-          'the same wire must pass through each punched hole');
+          'each real punch terminates a visible bar');
       }
     }
   }
+});
+
+test('a stepped spiral spread punches only the printed face at each station', () => {
+  const book = { bindingType: 'spiral', trimSizeMm: [120, 180], mockupDetails: { ringCount: 3 } };
+  const full = { width: 120, height: 180, top: 0 };
+  const inset = { width: 90, height: 60, top: 60 };
+  const layout = { width: 120, height: 180, coverTop: 0, leaves: [full, full], faces: [full, inset, full, full] };
+  const paths = readWire(book, { left: 2, right: 3 }, layout);
+  const punches = [...paths['reader-wire-holes'].matchAll(/M([-\d.]+) ([-\d.]+)a/g)];
+  assert.deepEqual(punches.map(match => Number(match[2])), [30, 90, 90, 150]);
+  assert.equal(paths['reader-wire-stroke'].match(/L/g).length, 3);
 });
 
 test('each reader O-ring closes on its own pair of holes and keeps custom spacing', () => {
