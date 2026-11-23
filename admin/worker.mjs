@@ -1171,6 +1171,8 @@ async function mutateCatalog(env, transform) {
 async function saveItem(request, env, kind) {
   const data = await readJson(request, kind === 'project' ? 4 * 1024 * 1024 : 1024 * 1024);
   const registrationId = mutationId(data.registrationId);
+  // The draft stays the same across edits, while each distinct save keeps its own mutation ID.
+  const draftId = data.draftId == null ? registrationId : mutationId(data.draftId);
   if (data.id !== undefined) itemId(data.id);
   let prepared;
   return mutateCatalog(env, catalog => {
@@ -1189,7 +1191,7 @@ async function saveItem(request, env, kind) {
     const otherItems = [...catalog.books, ...catalog.projects].filter(entry => entry.id !== existing?.id);
     if (otherItems.some(entry => entry.id === item.id)) throw new RequestError(409, '이미 사용 중인 작품 번호입니다.');
     // Re-evaluate ownership against each fresh snapshot when a concurrent publish wins.
-    const slug = data.slug === undefined ? existing?.slug ?? availableWorkSlug(item, otherItems) : normalizeWorkSlug(data.slug);
+    const slug = data.slug === undefined ? existing?.slug ?? availableWorkSlug({ ...item, id: draftId }, otherItems) : normalizeWorkSlug(data.slug);
     if (!slug) throw new RequestError(422, '작품 주소는 영문 소문자, 숫자, 하이픈으로 1~64자까지 입력해주세요. index와 404는 사용할 수 없습니다.', undefined, 'INVALID_WORK_SLUG');
     if (otherItems.some(other => other.slug === slug || other.slugAliases?.includes(slug))) {
       throw new RequestError(409, '다른 작품이 현재 사용하거나 이전에 사용한 주소입니다. 다른 주소를 입력해주세요.', undefined, 'WORK_SLUG_CONFLICT');
