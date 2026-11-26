@@ -8,6 +8,24 @@ const bound = ['paperback', 'hardcover', 'saddle-stitch', 'exposed-sewn', 'spira
 const trimSizeMm = [125, 175];
 const depth = book => spineRatio({ trimSizeMm, ...book }) * trimSizeMm[0];
 
+test('the shelf shows at least four millimetres while the detailed model uses measured or inferred depth', () => {
+  const cases = [
+    { bindingType: 'saddle-stitch', pageCount: 20, expected: 1 },
+    { bindingType: 'saddle-stitch', spineWidthMm: 2.5, expected: 2.5 },
+    { bindingType: 'paperback', spineWidthMm: 4, expected: 4 },
+    { bindingType: 'hardcover', spineWidthMm: 22, expected: 22 },
+    { bindingType: 'spiral', spineWidthMm: 1.5, expected: 1.5 },
+    { bookForm: 'cards', spineWidthMm: .6, expected: .6 },
+  ];
+  for (const { expected, ...format } of cases) {
+    for (const width of [55, 148, 210]) {
+      const book = Object.freeze({ ...format, trimSizeMm: [width, 190] });
+      assert.equal(spineRatio(book, { shelf: true }), Math.max(4, expected) / width);
+      assert.equal(spineRatio(book), expected / width);
+    }
+  }
+});
+
 test('each bound construction fits both measured covers before allocating room for the sheets', () => {
   for (const bindingType of bound) {
     const item = { bindingType, coverStock, pageCount: 24 };
