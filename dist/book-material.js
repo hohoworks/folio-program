@@ -7,14 +7,14 @@ export const mockupViews = Object.freeze({
   spine: { x: -12, y: 32 }, edge: { x: -12, y: -32 }, back: { x: -12, y: 148 }, front: { x: 0, y: 0 },
 });
 export const validBookColor = value => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
-export function spineRatio(book) {
+function spineDepthMm(book) {
   // One sheet of book paper contributes a front and a back to the page count.
   const sheets = Math.max(1, Math.ceil((book.pageCount ?? book.pages?.length ?? 0) / 2));
   if (book.bookForm === 'cards') {
     const stock = book.cardStock;
     const thickness = stockThickness(stock);
     const stack = thickness > 0 ? sheets * thickness : Math.max(.5, sheets * .22 * (stock?.layers?.length || 1));
-    return (book.spineWidthMm ?? stack) / trimSize(book)[0];
+    return book.spineWidthMm ?? stack;
   }
   const paperWidth = sheets * .1;
   let estimate = Math.max(3.5, paperWidth + .5);
@@ -31,7 +31,12 @@ export function spineRatio(book) {
   // A measured thickness can reserve less paper than the estimate. Two actual
   // boards still need room for their full plies and at least one sheet.
   if (board) depth = Math.max(depth, 2 * board + (book.spineWidthMm == null ? paperWidth : .1));
-  return depth / trimSize(book)[0];
+  return depth;
+}
+
+export function spineRatio(book, { shelf = false } = {}) {
+  const depth = spineDepthMm(book);
+  return (shelf ? Math.max(4, depth) : depth) / trimSize(book)[0];
 }
 
 const luminance = ([r, g, b]) => .2126 * r + .7152 * g + .0722 * b;
@@ -361,7 +366,7 @@ function setRibbon(surface, material) {
   surface.prepend(ribbon);
 }
 
-function setPhysicalDetails(surface, book, width) {
+function setPhysicalDetails(surface, book, width, depthMm) {
   const d = resolveMockupDetails(book.mockupDetails);
   const cards = book.bookForm === 'cards';
   const hardcover = !cards && book.bindingType === 'hardcover';
@@ -372,7 +377,6 @@ function setPhysicalDetails(surface, book, width) {
   const length = mm => 'calc(var(--material-width) * ' + mm / width + ')';
   const coverDepth = cards ? 0 : stockThickness(book.coverStock);
   const board = coverDepth || d.boardThicknessMm;
-  const depthMm = spineRatio(book) * width;
   const jointMm = hardcover ? Math.min(width * .1, 3 + (d.grooveWidthMm ?? 4)) : paperback ? Math.min(width * .07, 4.5) : 0;
   const properties = {
     '--case-joint-width': jointMm ? length(jointMm) : null,
@@ -420,11 +424,11 @@ function setPhysicalDetails(surface, book, width) {
 }
 
 export function setBookMaterial(surface, book, artwork) {
-  const ratio = spineRatio(book);
+  const ratio = spineRatio(book, { shelf: surface.classList.contains('shelf-book') });
   surface.style.setProperty('--spine-ratio', ratio);
   const width = trimSize(book)[0];
-  setPhysicalDetails(surface, book, width);
   const thicknessMm = ratio * width;
+  setPhysicalDetails(surface, book, width, thicknessMm);
   // The material repeats across four folded gatherings.
   const gatherings = Math.max(2, Math.round(thicknessMm / 2));
   surface.style.setProperty('--sewing-repeat', (400 / gatherings) + '%');
