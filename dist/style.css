@@ -339,6 +339,7 @@ h1:focus { outline: none; }
 
 .book-layout { display: grid; grid-template-columns: minmax(0, 1.92fr) minmax(245px, 1fr); }
 @media (width > 760px) {
+  .about-layout .intro-text, .contact-links a { font-size: 1.25rem; }
   #book-viewer[data-mode="cover"] .book-layout { min-height: calc(var(--content-height) - var(--viewbar-height)); }
   #book-viewer[data-mode="cover"] .stage { align-self: center; }
 }
