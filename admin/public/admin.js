@@ -5,7 +5,7 @@ import { errorMessage, postJson, request, uploadAsset } from '/upload-request.js
 import { createSiteEditor } from '/site-settings.js';
 import { STOCK_PROJECT_TAGS, idsFor } from './project-tags.js';
 import { encodeWebImage, encodeThumbnail, imageTargetBytes } from './image-encoding.js';
-import { bindMediaOrder } from './media-order.js';
+import { bindMediaOrder, reorderedCatalogue } from './media-order.js';
 import { MAX_PROJECT_VIDEO_BYTES, projectEmbedURL, projectVideoPlayer } from './project-media.js';
 import { planPdfPages, remainingPdfPages, sidesByShape, pdfFaceSize } from './pdf-layout.js';
 import { availableWorkSlug, normalizeWorkSlug, workPath } from './work-url.js';
@@ -1398,9 +1398,9 @@ function renderCatalogue() {
       .some(value => String(value || '').toLocaleLowerCase().includes(search)));
   $('#catalogue-count').textContent = '전체 ' + catalog.length + '개 · 공개 ' + catalog.filter(item => item.published !== false).length +
     '개' + (search || kind || tagId || year ? ' · 검색 결과 ' + filtered.length + '개' : '');
-  list.replaceChildren(...filtered.map(item => {
-    const index = catalog.indexOf(item);
+  list.replaceChildren(...filtered.map((item, index) => {
     const row = document.createElement('li');
+    row.dataset.workId = item.id;
     const title = document.createElement('button');
     title.type = 'button';
     title.className = 'catalogue-title';
@@ -1425,9 +1425,35 @@ function renderCatalogue() {
     row.append(thumbnail);
     const actions = document.createElement('div');
     actions.className = 'item-actions';
+    const orderDisabled = title.disabled || filtered.length < 2;
+    const handle = createButton('↕ 끌기', item.title + ' 순서 조정', null, orderDisabled);
+    handle.classList.add('media-handle');
+    handle.title = '원하는 위치로 끌기 · 키보드 ↑ ↓, Home, End';
+    const position = document.createElement('input');
+    position.type = 'range';
+    position.min = 1;
+    position.max = filtered.length;
+    position.value = index + 1;
+    position.disabled = orderDisabled;
+    position.setAttribute('aria-label', item.title + ' 표시 순서');
+    const number = document.createElement('span');
+    number.setAttribute('aria-hidden', 'true');
+    function showPosition() {
+      number.textContent = position.value + '/' + filtered.length;
+      position.setAttribute('aria-valuetext', '표시된 ' + filtered.length + '개 중 ' + position.value + '번째');
+    }
+    showPosition();
+    position.addEventListener('input', showPosition);
+    position.addEventListener('pointercancel', () => {
+      position.value = index + 1;
+      showPosition();
+    });
+    position.addEventListener('change', () => moveItem(index, Number(position.value) - 1));
+    const slider = document.createElement('div');
+    slider.className = 'catalogue-position';
+    slider.append(position, number);
     actions.append(
-      createButton('↑', item.title + ' 위로', () => moveItem(index, -1), busy || siteBusy || editorBusy || catalogBusy || index === 0),
-      createButton('↓', item.title + ' 아래로', () => moveItem(index, 1), busy || siteBusy || editorBusy || catalogBusy || index === catalog.length - 1),
+      handle, slider,
       createButton('수정', item.title + ' 수정', () => editItem(item), busy || siteBusy || editorBusy || catalogBusy),
     );
     if (item.kind === 'book') actions.append(createButton('목업 조정', item.title + ' 목업 조정', () => editItem(item, 'mockup'), title.disabled));
@@ -1437,13 +1463,33 @@ function renderCatalogue() {
   }));
 }
 
-async function moveItem(index, delta) {
+async function moveItem(from, to) {
   if (busy || siteBusy || editorBusy || catalogBusy) return;
-  const ordered = [...catalog];
-  const [item] = ordered.splice(index, 1);
-  ordered.splice(index + delta, 0, item);
-  await mutateCatalog('/api/order', { order: ordered.map(entry => entry.id), baseOrder: catalog.map(entry => entry.id) });
+  const list = $('#published-books');
+  const rows = [...list.children];
+  const visible = rows.map(row => row.dataset.workId);
+  const baseOrder = catalog.map(entry => entry.id);
+  const order = reorderedCatalogue(baseOrder, visible, from, to);
+  if (!order) return;
+  const id = visible[from];
+  const item = catalog.find(entry => entry.id === id);
+  const focused = document.activeElement;
+  const restoreFocus = rows[from].contains(focused);
+  const control = focused.matches('input[type="range"]') ? 'input[type="range"]' : '.media-handle';
+  const success = await mutateCatalog('/api/order', { order, baseOrder }, () => {
+    const items = new Map(catalog.map(entry => [entry.id, entry]));
+    catalog = order.map(id => items.get(id));
+  });
+  if (success && !$('#catalogue-status').textContent) {
+    $('#catalogue-status').textContent = item.title + ' 순서를 저장했습니다.';
+  }
+  if (restoreFocus && document.activeElement === document.body) {
+    const row = [...list.children].find(row => row.dataset.workId === id);
+    row?.querySelector(control)?.focus({ preventScroll: true });
+  }
 }
+
+bindMediaOrder($('#published-books'), moveItem, $('.catalogue'));
 
 async function deleteItem(item) {
   if (busy || siteBusy || editorBusy || catalogBusy || !window.confirm('“' + item.title + '”을 삭제할까요? 공개 페이지에서도 제거됩니다.')) return;
@@ -1453,7 +1499,7 @@ async function deleteItem(item) {
   if (removed && state.item?.id === item.id) await clearEditor();
 }
 
-async function mutateCatalog(path, payload) {
+async function mutateCatalog(path, payload, onSaved) {
   catalogBusy = true;
   error.textContent = '';
   updateView();
@@ -1461,6 +1507,7 @@ async function mutateCatalog(path, payload) {
   let success = false;
   try {
     await postJson(path, payload, undefined, waitingMessage);
+    onSaved?.();
     success = true;
   } catch (cause) {
     error.textContent = errorMessage(cause);
@@ -1469,6 +1516,7 @@ async function mutateCatalog(path, payload) {
     catalogBusy = false;
     await refreshCatalogue();
   }
+  if (!success && error.textContent) $('#catalogue-status').textContent = error.textContent;
   return success;
 }
 
