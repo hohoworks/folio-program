@@ -732,7 +732,8 @@ h1:focus { outline: none; }
 .shelf-book {
   --material-width: var(--face-width);
   --book-height: calc(var(--shelf-height) * .74);
-  --spine-width: clamp(34px, calc(var(--shelf-height) * .127), 70px);
+  --base-spine-width: clamp(34px, calc(var(--shelf-height) * .127), 70px);
+  --spine-width: var(--base-spine-width);
   --face-width: calc(var(--book-height) * .738);
   position: relative;
   display: block;
@@ -742,14 +743,15 @@ h1:focus { outline: none; }
   transition: width var(--shelf-motion), height var(--shelf-motion), margin var(--shelf-motion);
   text-decoration: none;
 }
-.shelf-book[data-book="city-lines"] { --book-height: calc(var(--shelf-height) * .66); --spine-width: clamp(30px, calc(var(--shelf-height) * .115), 63px); }
-.shelf-book[data-book="tidal-notes"] { --book-height: calc(var(--shelf-height) * .70); --spine-width: clamp(33px, calc(var(--shelf-height) * .12), 66px); }
+.shelf-book[data-book="city-lines"] { --book-height: calc(var(--shelf-height) * .66); --base-spine-width: clamp(30px, calc(var(--shelf-height) * .115), 63px); }
+.shelf-book[data-book="tidal-notes"] { --book-height: calc(var(--shelf-height) * .70); --base-spine-width: clamp(33px, calc(var(--shelf-height) * .12), 66px); }
 .shelf-book[data-proportional] {
   --book-height: calc(var(--shelf-mm) * var(--trim-height-mm));
-  --visible-spine: max(1px, calc(var(--face-width) * var(--spine-ratio)));
-  --spine-width: var(--visible-spine);
+  --base-spine-width: max(1px, calc(var(--face-width) * var(--spine-ratio)));
+  --visible-spine: var(--spine-width);
   --face-width: calc(var(--book-height) * var(--shelf-book-ratio));
 }
+.shelf-book[data-binding="saddle-stitch"] { --spine-width: calc(var(--base-spine-width) * 2 / 3); }
 .shelf-book:focus-visible { z-index: 2; outline: none; }
 .shelf-book:focus-visible::after {
   content: "";
